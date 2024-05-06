@@ -1,4 +1,4 @@
-import customtkinter
+import customtkinter as ctk
 import tkinter as tk
 from PIL import Image
 from ctkdlib.custom_widgets import *
@@ -29,13 +29,6 @@ selected_checkbox_text = ''
 root_width = ORIGINAL_WIDTH
 root_height = ORIGINAL_HEIGHT
 
-db_config = {
-    'host': 'SPH-SERVER-PRODUZIONE',
-    'port': '5432',
-    'user': 'postgres',
-    'password': 'SphDbProduzione'
-}
-
 def load_config(conf_item):
     try:
         with open("config.conf", "r") as config_file:
@@ -64,8 +57,15 @@ def save_config(conf_item, value):
     with open("config.conf", "w") as config_file:
         json.dump(config_data, config_file)
 
-customtkinter.set_appearance_mode(load_config("theme"))
-customtkinter.set_default_color_theme(load_config("color"))
+ctk.set_appearance_mode(load_config("theme"))
+ctk.set_default_color_theme(load_config("color"))
+
+db_config = {
+    'host':     load_config('pg_host'),      #'SPH-SERVER-PRODUZIONE'
+    'port':     load_config('pg_port'),      #'5432',
+    'user':     load_config('pg_user'),      #'postgres',
+    'password': load_config('pg_passwd')  #'SphDbProduzione'
+}
 
 def update_gui_scale(new_value):
     global GUI_SCALE
@@ -76,7 +76,7 @@ def update_color(new_value):
     global COLOR
     COLOR = new_value
     save_config("color", COLOR)
-    customtkinter.set_default_color_theme(load_config("color"))
+    ctk.set_default_color_theme(load_config("color"))
 
 THEME = load_config("theme")
 GUI_SCALE = load_config("gui_scale")
@@ -158,21 +158,21 @@ def switch_page(page):
         widget.lift()
         widget.place(x=widget.winfo_x(), y=widget.winfo_y())
 
-root = customtkinter.CTk()
+root = ctk.CTk()
 root.title("MES Industry")
 root.geometry((f"{ORIGINAL_WIDTH}x{ORIGINAL_HEIGHT}"))
 root.resizable(False, False)
 
-home_page = customtkinter.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+home_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 home_page.pack(expand=True, fill='both')
-singup_page = customtkinter.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-login_page = customtkinter.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-confirm_order_page = customtkinter.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+confirm_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 
 #FRAME TITLE
 FRAME_TITLE_WIDTH = 152
 FRAME_TITLE_HEIGHT = 40
-frame_app_title = customtkinter.CTkFrame(
+frame_app_title = ctk.CTkFrame(
     master=home_page, 
     width=_map_item_x(162, FRAME_TITLE_WIDTH), 
     height=_map_item_y(40, FRAME_TITLE_HEIGHT)
@@ -180,9 +180,9 @@ frame_app_title = customtkinter.CTkFrame(
 
 frame_app_title.place(x=0, y=0)
 
-label_app_title = customtkinter.CTkLabel(
+label_app_title = ctk.CTkLabel(
     master=frame_app_title,
-    font=customtkinter.CTkFont(
+    font=ctk.CTkFont(
         'Roboto',
         size=26),
     bg_color=[
@@ -198,7 +198,7 @@ label_app_title.place(x=0, y=0)
 FRAME_CONN_WIDTH = 152
 FRAME_CONN_HEIGHT = 30
 
-frame_connection_title = customtkinter.CTkFrame(
+frame_connection_title = ctk.CTkFrame(
     master=home_page, 
     width=_map_frame_x(FRAME_CONN_WIDTH),
     height=_map_frame_y(FRAME_CONN_HEIGHT)
@@ -208,9 +208,9 @@ frame_connection_title = customtkinter.CTkFrame(
 
 connection_state_text = "Utente: " + LOGGED_USER + "DB: " + DB_STATE
 
-label_connessione = customtkinter.CTkLabel(
+label_connessione = ctk.CTkLabel(
     master=frame_connection_title,
-    font=customtkinter.CTkFont(
+    font=ctk.CTkFont(
         'Roboto',
         size=15),
     bg_color=['gray86','gray17'],
@@ -229,7 +229,7 @@ def update_db_user_state():
     label_connessione.configure(text=connection_state_text)
 
     # Calcola la larghezza del testo del messaggio di stato della connessione
-    text_width = customtkinter.CTkFont('Roboto', size=15).measure(connection_state_text)
+    text_width = ctk.CTkFont('Roboto', size=15).measure(connection_state_text)
 
     # Aggiorna la larghezza del frame e del label in base alla larghezza del testo
     frame_connection_title.configure(width=_map_frame_x(text_width + 10))  # Aggiungi un po' di spazio extra
@@ -241,13 +241,13 @@ def update_db_user_state():
 #FRAME LOGIN SETTINGS
 LOG_SET_FRAME_WIDTH = 106# + 20
 LOG_SET_FRAME_HEIGHT = 40# + 20
-frame_log_setting = customtkinter.CTkFrame(
+frame_log_setting = ctk.CTkFrame(
     master=home_page, 
     width=_map_frame_x(LOG_SET_FRAME_WIDTH), 
     height=_map_frame_y(LOG_SET_FRAME_HEIGHT)
     )
 
-login_button = customtkinter.CTkButton(
+login_button = ctk.CTkButton(
     master=frame_log_setting,
     bg_color=[
         'gray86',
@@ -259,7 +259,7 @@ login_button = customtkinter.CTkButton(
 
 login_button.place(x=_map_item_x(6, LOG_SET_FRAME_WIDTH), y=_map_item_y(4, LOG_SET_FRAME_HEIGHT))
 
-setting_button = customtkinter.CTkButton(
+setting_button = ctk.CTkButton(
     master=frame_log_setting,
     bg_color=[
         'gray86',
@@ -268,12 +268,10 @@ setting_button = customtkinter.CTkButton(
     width=_map_item_x(36 + 5, LOG_SET_FRAME_WIDTH),
     height=_map_item_y(30 + 5, LOG_SET_FRAME_HEIGHT),
     text="",
-    image=customtkinter.CTkImage(
+    image=ctk.CTkImage(
         Image.open('libs\gear_icon.png'),
-        size=(
-            20,
-            20)),
-    command=lambda: switch_page(singup_page))
+        size=(20,20)),
+        command=lambda: switch_page(singup_page))
 setting_button.place(x=_map_item_x(64, LOG_SET_FRAME_WIDTH), y=_map_item_y(4, LOG_SET_FRAME_HEIGHT))
 
 #FRAME SETUP TIME 
@@ -281,14 +279,14 @@ SETUP_TIME_FRAME_WIDTH = 210
 SETUP_TIME_FRAME_HEIGHT = 100
 
 #GENERAZIONE FRAME
-frame_setup_time = customtkinter.CTkFrame(
+frame_setup_time = ctk.CTkFrame(
     master=home_page,
     width=_map_frame_x(SETUP_TIME_FRAME_WIDTH), 
     height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT)
     )
 
 #GENERAZIONE LABEL
-tempo_setup_label = customtkinter.CTkLabel(
+tempo_setup_label = ctk.CTkLabel(
     master=frame_setup_time, bg_color=[
         'gray86', 'gray17'], text="Tempo di setup (min)")
 tempo_setup_label.place(x=_map_item_x(18, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(6, SETUP_TIME_FRAME_HEIGHT))
@@ -309,7 +307,7 @@ tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(4
 CONTAINER_TIME_FRAME_WIDTH = 890
 CONTAINER_TIME_FRAME_HEIGHT = 110
 
-frame_container_time = customtkinter.CTkFrame(
+frame_container_time = ctk.CTkFrame(
     master=home_page, 
     width=CONTAINER_TIME_FRAME_WIDTH, 
     height=CONTAINER_TIME_FRAME_HEIGHT,
@@ -320,13 +318,13 @@ frame_container_time = customtkinter.CTkFrame(
 TAGLIO_TIME_FRAME_WIDTH = 210
 TAGLIO_TIME_FRAME_HEIGHT = 100
 
-frame_taglio_time = customtkinter.CTkFrame(
+frame_taglio_time = ctk.CTkFrame(
     master=frame_container_time,
     width=TAGLIO_TIME_FRAME_WIDTH,#_map_frame_x(TAGLIO_TIME_FRAME_WIDTH),
     height=TAGLIO_TIME_FRAME_HEIGHT#_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT)
     )
 
-frame_taglio_label = customtkinter.CTkLabel(
+frame_taglio_label = ctk.CTkLabel(
     master=frame_taglio_time, bg_color=[
         'gray86', 'gray17'], text="Tempo di taglio (min)")
 frame_taglio_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT))
@@ -346,13 +344,13 @@ tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y
 TORNITURA_TIME_FRAME_WIDTH = 210
 TORNITURA_TIME_FRAME_HEIGHT = 100
 
-frame_tornitura_time = customtkinter.CTkFrame(
+frame_tornitura_time = ctk.CTkFrame(
     master=frame_container_time,
     width=TORNITURA_TIME_FRAME_WIDTH, #_map_frame_x(TORNITURA_TIME_FRAME_WIDTH), 
     height=TORNITURA_TIME_FRAME_HEIGHT #_map_frame_y(TORNITURA_TIME_FRAME_HEIGHT)
     )
 
-frame_tornitura_label = customtkinter.CTkLabel(
+frame_tornitura_label = ctk.CTkLabel(
     master=frame_tornitura_time, bg_color=[
         'gray86', 'gray17'], text="Tempo di tornitura (min)")
 frame_tornitura_label.place(x=_map_item_x(18, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(6, TORNITURA_TIME_FRAME_HEIGHT))
@@ -372,13 +370,13 @@ tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_
 FRESATURA_TIME_FRAME_WIDTH = 210
 FRESATURA_TIME_FRAME_HEIGHT = 100
 
-frame_fresatura_time = customtkinter.CTkFrame(
+frame_fresatura_time = ctk.CTkFrame(
     master=frame_container_time,
     width=FRESATURA_TIME_FRAME_WIDTH, #_map_frame_x(FRESATURA_TIME_FRAME_WIDTH), 
     height=FRESATURA_TIME_FRAME_HEIGHT #_map_frame_y(FRESATURA_TIME_FRAME_HEIGHT)
     )
 
-frame_fresatura_label = customtkinter.CTkLabel(
+frame_fresatura_label = ctk.CTkLabel(
     master=frame_fresatura_time, bg_color=[
         'gray86', 'gray17'], text="Tempo di fresatura (min)")
 frame_fresatura_label.place(x=_map_item_x(18, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(6, FRESATURA_TIME_FRAME_HEIGHT))
@@ -398,13 +396,13 @@ tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_
 ELETTRO_TIME_FRAME_WIDTH = 210
 ELETTRO_TIME_FRAME_HEIGHT = 100
 
-frame_elettro_time = customtkinter.CTkFrame(
+frame_elettro_time = ctk.CTkFrame(
     master=frame_container_time,
     width=ELETTRO_TIME_FRAME_WIDTH, #_map_frame_x(ELETTRO_TIME_FRAME_WIDTH), 
     height=ELETTRO_TIME_FRAME_HEIGHT #_map_frame_y(ELETTRO_TIME_FRAME_HEIGHT)
     )
 
-frame_elettro_label = customtkinter.CTkLabel(
+frame_elettro_label = ctk.CTkLabel(
     master=frame_elettro_time, bg_color=[
         'gray86', 'gray17'], text="Tempo di elettro (min)")
 frame_elettro_label.place(x=_map_item_x(18, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(6, ELETTRO_TIME_FRAME_HEIGHT))
@@ -423,7 +421,7 @@ tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item
 #PEZZI FRAME
 N_PEZZI_FRAME_WIDTH = 210
 N_PEZZI_FRAME_HEIGHT = 100
-frame_n_pezzi = customtkinter.CTkFrame(
+frame_n_pezzi = ctk.CTkFrame(
     master=home_page, 
     width=_map_frame_x(N_PEZZI_FRAME_WIDTH), 
     height=_map_frame_y(N_PEZZI_FRAME_HEIGHT)
@@ -444,19 +442,19 @@ pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44,
 N_DRAW_FRAME_WIDTH = 180
 N_DRAW_FRAME_HEIGHT = 90
 
-frame_n_draw = customtkinter.CTkFrame(
+frame_n_draw = ctk.CTkFrame(
     master=home_page,
     width=_map_frame_x(N_DRAW_FRAME_WIDTH), 
     height=_map_frame_y(N_DRAW_FRAME_HEIGHT)
     )
 
-draw_num_label = customtkinter.CTkLabel(
+draw_num_label = ctk.CTkLabel(
     master=frame_n_draw, 
     bg_color=['gray92', 'gray14'], 
     text="Numero disegno")
 draw_num_label.place(relx = 0.09, rely=0.1)#x=_map_item_x(65, N_DRAW_FRAME_WIDTH), y=_map_item_y(75, N_DRAW_FRAME_HEIGHT))
 
-draw_num_entry = customtkinter.CTkEntry(
+draw_num_entry = ctk.CTkEntry(
     master=frame_n_draw, 
     width= 140 + 10,
     height= 28 + 10,
@@ -468,22 +466,22 @@ draw_num_entry.place(relx = 0.09, rely=0.4)#(x=_map_item_x(25, N_DRAW_FRAME_WIDT
 #LAVORAZIONE FRAME
 LAVORAZIONE_FRAME_WIDTH = 400
 LAVORAZIONE_FRAME_HEIGHT = 40
-frame_lavorazione = customtkinter.CTkFrame(master=home_page, 
+frame_lavorazione = ctk.CTkFrame(master=home_page, 
                                            width=_map_frame_x(LAVORAZIONE_FRAME_WIDTH), 
                                            height=_map_frame_y(LAVORAZIONE_FRAME_HEIGHT)
                                            )
 #frame_lavorazione.place(x=191, y=73)
 
-tornitura_checkbox = customtkinter.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Tornitura")
+tornitura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Tornitura")
 tornitura_checkbox.place(x=_map_item_x(115, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-fresatura_checkbox = customtkinter.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Fresatura")
+fresatura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Fresatura")
 fresatura_checkbox.place(x=_map_item_x(220, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-elettro_checkbox = customtkinter.CTkCheckBox(master=frame_lavorazione, bg_color=['gray92', 'gray14'], width=72, text="Elettro")
+elettro_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray92', 'gray14'], width=72, text="Elettro")
 elettro_checkbox.place(x=_map_item_x(320, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-taglio_checkbox = customtkinter.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Taglio")
+taglio_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Taglio")
 taglio_checkbox.place(x=_map_item_x(13, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
 def create_database(username):
@@ -585,27 +583,24 @@ def perform_registration():
                 icon="warning"
                 )
 
-def check_db_connection():
-    global db_config
+def check_db_connection(db_config):
     global DB_STATE
-
     try:
         # Prova a connetterti al database PostgreSQL
         conn = psycopg2.connect(**db_config)
-        DB_STATE = 'OK'  # Se la connessione è riuscita, imposta DB_STATE su 'OK'
+        conn.close()  # Chiudi immediatamente la connessione, non serve tenerla aperta
+        DB_STATE = "Connesso"
+        update_db_user_state()
+        return True  # Restituisci True se la connessione è riuscita
     except psycopg2.Error as e:
         print(f"Errore durante la connessione al database: {e}")
-        DB_STATE = 'Errore di connessione'  # Se c'è stato un errore di connessione, imposta DB_STATE su 'Errore di connessione'
-    finally:
-        # Aggiorna lo stato della connessione nel programma
         update_db_user_state()
+        DB_STATE = 'Errore di connessione' 
+        return False  # Restituisci False se c'è stato un errore di connessione
 
-        # Chiudi la connessione se è stata aperta
-        if 'conn' in locals():
-            conn.close()
 
 # Chiamata alla funzione per verificare la connessione al database all'avvio
-check_db_connection()
+check_db_connection(db_config)
 
 selected_checkboxes = []  # Lista per tenere traccia dei checkbox selezionati
 
@@ -623,6 +618,96 @@ def update_selected_text():
 
     selected_checkbox_text = ', '.join([checkbox.cget('text') for checkbox in selected_checkboxes])
 
+def ask_question_db_conf(host, port, user, passwd):
+    # Formattazione dei dati come una tabella
+    tabella = (
+        f"{'HOST:':<20}{host}\n"
+        f"{'PORT:':<20}{port}\n"
+        f"{'USER:':<20}{user}\n"
+        f"{'PASSWORD:':<20}{passwd}"
+    )
+
+    # Creazione del messaggio di messagebox
+    msg = CTkMessagebox(
+        title="Conferma impostazioni Postgres", 
+        message=f"Impostazioni:\n\n{tabella}\nIl test della connessione ha dato esito positivo\nConferma per salvare?",
+        width=500,
+        icon="question", 
+        option_1="Conferma", 
+        option_2="Modifica" 
+    )
+
+    # Ottieni la risposta dal messagebox
+    response = msg.get()
+    
+    if response=="Conferma":
+        return True
+    elif response=="Modifica":
+        return False
+
+def save_db_conf(host, port, user, passwd, dialog):
+
+    db_config = {
+        'host': host,
+        'port': port,
+        'user': user,
+        'password': passwd
+    }
+
+    if check_db_connection(db_config):
+        if(ask_question_db_conf(host, port, user, passwd)):
+            save_config('pg_host', host)
+            save_config('pg_port', port)
+            save_config('pg_user', user)
+            save_config('pg_passwd', passwd)
+            dialog.destroy()
+
+
+def show_db_config_dialog():
+    dialog = ctk.CTkToplevel()
+    dialog.title("Configurazione Server PostgreSQL")
+    dialog.geometry("400x300")
+    dialog.resizable(False, False)
+
+    host_label = ctk.CTkLabel(dialog, text="Host:")
+    host_label.pack()
+    host_entry = ctk.CTkEntry(dialog)
+    host_entry.pack()
+
+    port_label = ctk.CTkLabel(dialog, text="Porta:")
+    port_label.pack()
+    port_entry = ctk.CTkEntry(dialog)
+    port_entry.pack()
+
+    user_label = ctk.CTkLabel(dialog, text="Utente:")
+    user_label.pack()
+    user_entry = ctk.CTkEntry(dialog)
+    user_entry.pack()
+
+    password_label = ctk.CTkLabel(dialog, text="Password:")
+    password_label.pack()
+    password_entry = ctk.CTkEntry(dialog, show="*")
+    password_entry.pack()
+
+    # Carica le impostazioni dal file di configurazione (se esiste)
+    host_entry.insert(0, load_config('pg_host') or '')
+    port_entry.insert(0, load_config('pg_port') or '')
+    user_entry.insert(0, load_config('pg_user') or '')
+    password_entry.insert(0, load_config('pg_passwd') or '')
+
+    save_button = ctk.CTkButton(
+        dialog, 
+        text="Test impostazioni", 
+        command=lambda: save_db_conf(host_entry.get(), port_entry.get(), user_entry.get(), password_entry.get(), dialog)
+        )
+    save_button.pack()
+
+    dialog.focus_set()  # Imposta il focus sulla finestra di dialogo
+    dialog.grab_set()   # Blocca l'input alle altre finestre
+    dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
+
+
+
 def checkbox_clicked(checkbox):
     update_selected_checkbox(checkbox)
     update_selected_text()
@@ -638,19 +723,19 @@ taglio_checkbox.configure(command=lambda: checkbox_clicked(taglio_checkbox))
 SINGUP_FRAME_WIDTH = 190 + 15
 SINGUP_FRAME_HEIGHT = 263 + 40
 
-frame_singup = customtkinter.CTkFrame(
+frame_singup = ctk.CTkFrame(
     master=singup_page, 
     width=_map_frame_x(SINGUP_FRAME_WIDTH), 
     height=_map_frame_y(SINGUP_FRAME_HEIGHT) 
     )
 
-user_label_singup = customtkinter.CTkLabel(
+user_label_singup = ctk.CTkLabel(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'], 
     text="Username")
 user_label_singup.place(x=_map_item_x(60, SINGUP_FRAME_WIDTH), y=_map_item_y(2, SINGUP_FRAME_HEIGHT))
 
-user_singup_entry = customtkinter.CTkEntry(
+user_singup_entry = ctk.CTkEntry(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'],
     width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
@@ -659,7 +744,7 @@ user_singup_entry = customtkinter.CTkEntry(
 print("user_singup_entry: " + str(user_singup_entry))
 user_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(30, SINGUP_FRAME_HEIGHT))
 
-passwd_label_singup = customtkinter.CTkLabel(
+passwd_label_singup = ctk.CTkLabel(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'], 
     text="Password",
@@ -668,7 +753,7 @@ passwd_label_singup = customtkinter.CTkLabel(
     )
 passwd_label_singup.place(x=_map_item_x(60, SINGUP_FRAME_WIDTH), y=_map_item_y(70, SINGUP_FRAME_HEIGHT))
 
-passwd_singup_entry = customtkinter.CTkEntry(
+passwd_singup_entry = ctk.CTkEntry(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'],
     width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
@@ -677,7 +762,7 @@ passwd_singup_entry = customtkinter.CTkEntry(
 passwd_singup_entry.configure(show='*')
 passwd_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(90, SINGUP_FRAME_HEIGHT))
 
-repeat_passwd_label_singup = customtkinter.CTkLabel(
+repeat_passwd_label_singup = ctk.CTkLabel(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'], 
     text="Ripeti password",
@@ -686,7 +771,7 @@ repeat_passwd_label_singup = customtkinter.CTkLabel(
     )
 repeat_passwd_label_singup.place(x=_map_item_x(45, SINGUP_FRAME_WIDTH), y=_map_item_y(130, SINGUP_FRAME_HEIGHT))
 
-passwd_repeat_singup_entry = customtkinter.CTkEntry(
+passwd_repeat_singup_entry = ctk.CTkEntry(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'],
     width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
@@ -695,7 +780,7 @@ passwd_repeat_singup_entry = customtkinter.CTkEntry(
 passwd_repeat_singup_entry.configure(show='*')
 passwd_repeat_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(150, SINGUP_FRAME_HEIGHT))
 
-singup_button = customtkinter.CTkButton(
+singup_button = ctk.CTkButton(
     master=frame_singup, 
     bg_color=['gray92', 'gray14'], 
     text="Registrati",
@@ -705,7 +790,7 @@ singup_button = customtkinter.CTkButton(
     )
 singup_button.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(200, SINGUP_FRAME_HEIGHT))
 
-back_button_singup = customtkinter.CTkButton(
+back_button_singup = ctk.CTkButton(
     master=frame_singup,
     bg_color=['gray92','gray14'],
     text="Indietro",
@@ -716,30 +801,31 @@ back_button_singup.place(x=_map_item_x(24, SETUP_TIME_FRAME_WIDTH), y=_map_item_
 
 def change_appearance_mode_event(new_appearance_mode: str):
     save_config("theme", new_appearance_mode)
-    customtkinter.set_appearance_mode(new_appearance_mode)
+    ctk.set_appearance_mode(new_appearance_mode)
 
 def change_color_event(new_color: str):
     save_config("color", new_color)
-    customtkinter.set_default_color_theme(new_color)
+    ctk.set_default_color_theme(new_color)
 
 
 
 #FRAME SETTINGS
 SETTINGS_FRAME_WIDTH = 190 + 10
-SETTINGS_FRAME_HEIGHT = 263 + 10
+SETTINGS_FRAME_HEIGHT = 263 + 40
 
-frame_settings = customtkinter.CTkFrame(master=singup_page, 
-                                      width=_map_frame_x(SETTINGS_FRAME_WIDTH), 
-                                      height=_map_frame_y(SETTINGS_FRAME_HEIGHT)                                      
-                                      )
+frame_settings = ctk.CTkFrame(
+    master=singup_page, 
+    width=_map_frame_x(SETTINGS_FRAME_WIDTH), 
+    height=_map_frame_y(SETTINGS_FRAME_HEIGHT)                                      
+    )
 
-settings_label_singup = customtkinter.CTkLabel(
+settings_label_singup = ctk.CTkLabel(
     master=frame_settings, 
     bg_color=['gray92', 'gray14'], 
-    text="Settings")
+    text="Impostazioni")
 settings_label_singup.place(x=_map_item_x(60, SETTINGS_FRAME_WIDTH), y=_map_item_y(1, SETTINGS_FRAME_HEIGHT))
 
-gui_scale_label_singup = customtkinter.CTkLabel(
+gui_scale_label_singup = ctk.CTkLabel(
     master=frame_settings, 
     bg_color=['gray92', 'gray14'], 
     text="GUI Scale")
@@ -758,14 +844,13 @@ gui_scale_select_num.configure(command=lambda: update_gui_scale(gui_scale_select
 
 gui_scale_select_num.place(x=_map_item_x(24, SETTINGS_FRAME_WIDTH), y=_map_item_y(45, SETTINGS_FRAME_HEIGHT))
 
-appearance_mode_label = customtkinter.CTkLabel(frame_settings, text="Tema:", anchor="w")
+appearance_mode_label = ctk.CTkLabel(frame_settings, text="Tema:", anchor="w")
 #appearance_mode_label.grid(row=5, column=0, padx=20, pady=(10, 0))
 appearance_mode_label.place(x=_map_item_x(60, SETTINGS_FRAME_WIDTH), y=_map_item_y(100, SETTINGS_FRAME_HEIGHT))
 
-appearance_mode_optionemenu = customtkinter.CTkOptionMenu(
+appearance_mode_optionemenu = ctk.CTkOptionMenu(
     frame_settings, 
     values=["Light", "Dark", "System"],
-    #variable= THEME,
     command=change_appearance_mode_event)
 #appearance_mode_optionemenu.grid(row=6, column=0, padx=20, pady=(10, 10))
 default_theme_text = "Seleziona un tema"
@@ -773,17 +858,16 @@ appearance_mode_optionemenu.set(default_theme_text)
 
 appearance_mode_optionemenu.place(x=_map_item_x(24, SETTINGS_FRAME_WIDTH), y=_map_item_y(125, SETTINGS_FRAME_HEIGHT))
 
-color_label = customtkinter.CTkLabel(frame_settings, text="Colore:", anchor="w")
+color_label = ctk.CTkLabel(frame_settings, text="Colore:", anchor="w")
 #appearance_mode_label.grid(row=5, column=0, padx=20, pady=(10, 0))
 color_label.place(x=_map_item_x(60, SETTINGS_FRAME_WIDTH), y=_map_item_y(165, SETTINGS_FRAME_HEIGHT))
 
 # Ottieni la lista dei nomi dei colori supportati da tkinter
 color_names = ["green", "blue"]
 
-color_optionemenu = customtkinter.CTkOptionMenu(
+color_optionemenu = ctk.CTkOptionMenu(
     frame_settings, 
-    values=color_names, 
-    #default_value= COLOR, 
+    values=color_names,
     command= change_color_event
     )
 
@@ -792,6 +876,17 @@ color_optionemenu.set(default_color_text)
 
 #color_optionemenu.grid(row=6, column=0, padx=20, pady=(10, 10))
 color_optionemenu.place(x=_map_item_x(24, SETTINGS_FRAME_WIDTH), y=_map_item_y(190, SETTINGS_FRAME_HEIGHT))
+
+db_settings = ctk.CTkButton(
+    master=frame_settings,
+    bg_color=['gray92','gray14'],
+    text="Impostazioni DB",
+    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
+    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
+    command=lambda: show_db_config_dialog()
+    )
+
+db_settings.place(x=_map_item_x(24, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(230, SETUP_TIME_FRAME_HEIGHT))
 
 def get_user_databases():
     try:
@@ -1063,21 +1158,21 @@ def ask_question(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tem
 LOGIN_FRAME_WIDTH = 190 + 10
 LOGIN_FRAME_HEIGHT = 263 + 10
 
-frame_login = customtkinter.CTkFrame(
+frame_login = ctk.CTkFrame(
     master=login_page, 
     width=_map_frame_x(LOGIN_FRAME_WIDTH),
     height=_map_frame_y(LOGIN_FRAME_HEIGHT)
     )
 
 
-user_menu_label = customtkinter.CTkLabel(
+user_menu_label = ctk.CTkLabel(
     master=frame_login, 
     bg_color=['gray92', 'gray14'], 
     text="Seleziona utente"
     )
 user_menu_label.place(x=_map_item_x(50, LOGIN_FRAME_WIDTH), y=_map_item_y(3, LOGIN_FRAME_HEIGHT))
 
-passwd_login_entry = customtkinter.CTkEntry(
+passwd_login_entry = ctk.CTkEntry(
     master=frame_login, 
     width= 140 + 10,
     height= 28 + 10,
@@ -1086,13 +1181,13 @@ passwd_login_entry = customtkinter.CTkEntry(
 passwd_login_entry.configure(show='*')
 passwd_login_entry.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(110, LOGIN_FRAME_HEIGHT))
 
-passwd_label = customtkinter.CTkLabel(
+passwd_label = ctk.CTkLabel(
     master=frame_login, 
     bg_color=['gray92', 'gray14'], 
     text="Password")
 passwd_label.place(x=_map_item_x(65, LOGIN_FRAME_WIDTH), y=_map_item_y(75, LOGIN_FRAME_HEIGHT))
 
-login_button = customtkinter.CTkButton(
+login_button = ctk.CTkButton(
     master=frame_login, 
     bg_color=['gray92', 'gray14'], 
     #width= 140,
@@ -1105,7 +1200,7 @@ login_button.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(168, LOGI
 # Collega la funzione al pulsante "Accedi"
 login_button.configure(command=accedi)
 
-back_login_button = customtkinter.CTkButton(
+back_login_button = ctk.CTkButton(
     master=frame_login,
     bg_color=['gray92','gray14'],
     command=lambda: switch_page(home_page),
@@ -1114,7 +1209,7 @@ back_login_button = customtkinter.CTkButton(
     text="Indietro")
 back_login_button.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(210, LOGIN_FRAME_HEIGHT))
 
-button_conferma_ordine = customtkinter.CTkButton(
+button_conferma_ordine = ctk.CTkButton(
     master=home_page, 
     bg_color=['gray92', 'gray14'], 
     text="Conferma ordine",
@@ -1123,18 +1218,18 @@ button_conferma_ordine = customtkinter.CTkButton(
     command=lambda: conferma_ordine())
 button_conferma_ordine.place(relx=0.5, rely=1.0, anchor='s')
 
-pezzi_label = customtkinter.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
+pezzi_label = ctk.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
 pezzi_label.place(x=_map_item_x(55, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(8, SETUP_TIME_FRAME_HEIGHT))
 
 lista_utenti = get_user_databases() #["Utente1", "Utente2", "Utente3"]
 
-menu_tendina_utenti = customtkinter.CTkOptionMenu(
+menu_tendina_utenti = ctk.CTkOptionMenu(
     master=frame_login, 
     values=[], 
     bg_color=['gray86', 'gray17'],
     width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH), 
     height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    dropdown_font = customtkinter.CTkFont(
+    dropdown_font = ctk.CTkFont(
         'Roboto',
         size=16),
     hover=False)
