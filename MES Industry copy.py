@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import filedialog
 from PIL import Image
 from ctkdlib.custom_widgets import *
 from CTkMessagebox import CTkMessagebox
@@ -168,6 +169,23 @@ home_page.pack(expand=True, fill='both')
 singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 confirm_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+
+def get_files_in_directory(directory_path):
+    # Verifica se il percorso specificato è una directory
+    if not os.path.isdir(directory_path):
+        print(f"{directory_path} non è una directory valida.")
+        return []
+
+    # Ottieni la lista dei file nella directory
+    files = os.listdir(directory_path)
+    
+    # Filtra solo i file (escludendo le eventuali sottodirectory)
+    files = [file for file in files if os.path.isfile(os.path.join(directory_path, file))]
+    
+    return files
+
+directory_path = load_config("draw_directory")
+file_list = get_files_in_directory(directory_path)
 
 #FRAME TITLE
 FRAME_TITLE_WIDTH = 152
@@ -438,7 +456,7 @@ pezzi_select_num = CTkSpinbox(
         )
 pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44, N_PEZZI_FRAME_HEIGHT))
 
-#SETUP TIME FRAME
+#FRAME DRAW
 N_DRAW_FRAME_WIDTH = 180
 N_DRAW_FRAME_HEIGHT = 90
 
@@ -448,11 +466,21 @@ frame_n_draw = ctk.CTkFrame(
     height=_map_frame_y(N_DRAW_FRAME_HEIGHT)
     )
 
+draw_mode_checkbox = ctk.CTkCheckBox(
+    master=frame_n_draw, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+    )
+
+#draw_mode_checkbox.select()
+
+draw_mode_checkbox.place(relx = 0.65, rely=0.1)#.place(x=_map_item_x(115, N_DRAW_FRAME_WIDTH), y=_map_item_y(8, N_DRAW_FRAME_HEIGHT))
+
 draw_num_label = ctk.CTkLabel(
     master=frame_n_draw, 
     bg_color=['gray92', 'gray14'], 
     text="Numero disegno")
-draw_num_label.place(relx = 0.09, rely=0.1)#x=_map_item_x(65, N_DRAW_FRAME_WIDTH), y=_map_item_y(75, N_DRAW_FRAME_HEIGHT))
+draw_num_label.place(relx = 0.09, rely=0.11)#x=_map_item_x(65, N_DRAW_FRAME_WIDTH), y=_map_item_y(75, N_DRAW_FRAME_HEIGHT))
 
 draw_num_entry = ctk.CTkEntry(
     master=frame_n_draw, 
@@ -461,7 +489,27 @@ draw_num_entry = ctk.CTkEntry(
     bg_color=['gray92', 'gray14']
     )
 
-draw_num_entry.place(relx = 0.09, rely=0.4)#(x=_map_item_x(25, N_DRAW_FRAME_WIDTH), y=_map_item_y(110, N_DRAW_FRAME_HEIGHT))
+menu_tendina_disegni = ctk.CTkOptionMenu(
+    master=frame_n_draw, 
+    values=[], 
+    bg_color=['gray86', 'gray17'],
+    #width=_map_item_x(140 + 10, N_DRAW_FRAME_WIDTH), 
+    #height=_map_item_y(28 + 10, N_DRAW_FRAME_HEIGHT),
+    width= 140 + 10,
+    height= 28 + 10,
+    dropdown_font = ctk.CTkFont(
+        'Roboto',
+        size=16),
+    hover=False)
+
+menu_tendina_disegni.configure(values=file_list)
+menu_tendina_disegni.set("Sel. num. disegno")
+
+if draw_mode_checkbox.get():
+    menu_tendina_disegni.place(relx = 0.09, rely=0.4)
+else:
+    draw_num_entry.place(relx = 0.09, rely=0.4)#(x=_map_item_x(25, N_DRAW_FRAME_WIDTH), y=_map_item_y(110, N_DRAW_FRAME_HEIGHT))
+#menu_tendina_disegni.place(relx = 0.09, rely=0.4)#place(x=_map_item_x(15, N_DRAW_FRAME_WIDTH), y=_map_item_y(10, N_DRAW_FRAME_HEIGHT))
 
 #LAVORAZIONE FRAME
 LAVORAZIONE_FRAME_WIDTH = 400
@@ -508,7 +556,7 @@ def create_database(username):
     except Exception as e:
         print(f"Errore durante la creazione del database per '{username}': {e}")
         return None
-    
+
 def perform_registration():
     #username = menu_tendina_utenti.get()
     #password = passwd_login_entry.get()
@@ -662,6 +710,56 @@ def save_db_conf(host, port, user, passwd, dialog):
             save_config('pg_passwd', passwd)
             dialog.destroy()
 
+def show_draw_config_dialog():
+    def choose_directory():
+        directory_path = filedialog.askdirectory()
+        if directory_path:
+            directory_entry.delete(0, "end")  # Pulisce l'entry widget
+            directory_entry.insert(0, directory_path)  # Inserisce il percorso selezionato nell'entry widget
+
+    def save_directory():
+        chosen_directory = directory_entry.get()
+        if chosen_directory:
+            # Ora puoi salvare il percorso della directory come preferisci
+            # Ad esempio, utilizzando la funzione save_config() che hai definito precedentemente
+            save_config("draw_directory", chosen_directory)
+            dialog.destroy()  # Chiude la finestra di dialogo dopo aver salvato il percorso
+
+    def toggle_auto_scan(checkbox):
+        if checkbox:
+            save_config("draw_auto_scan", True)
+        else:
+            save_config("draw_auto_scan", False)
+
+    dialog = ctk.CTkToplevel()
+    dialog.title("Configurazione Directory Disegni")
+
+    directory_label = ctk.CTkLabel(dialog, text="Directory:")
+    directory_label.grid(row=0, column=0, padx=5, pady=5)
+
+    directory_entry = ctk.CTkEntry(dialog, width=50)
+    directory_entry.grid(row=0, column=1, padx=5, pady=5)
+
+    choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
+    choose_button.grid(row=0, column=2, padx=5, pady=5)
+    
+    #auto_scan_var = ctk.CTkIntVar()
+    auto_scan_checkbox = ctk.CTkCheckBox(
+        dialog, 
+        text="Scan", 
+        #variable=auto_scan_var, 
+        command=toggle_auto_scan(auto_scan_checkbox.get())
+        )
+    auto_scan_checkbox.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+
+    save_button = ctk.CTkButton(dialog, text="Salva", command=save_directory)
+    save_button.grid(row=2, column=1, padx=5, pady=5)
+
+    dialog.lift()  # Solleva la finestra di dialogo in primo piano
+
+    dialog.focus_set()  # Imposta il focus sulla finestra di dialogo
+    dialog.grab_set()   # Blocca l'input alle altre finestre
+    dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
 
 def show_db_config_dialog():
     dialog = ctk.CTkToplevel()
@@ -811,7 +909,7 @@ def change_color_event(new_color: str):
 
 #FRAME SETTINGS
 SETTINGS_FRAME_WIDTH = 190 + 10
-SETTINGS_FRAME_HEIGHT = 263 + 40
+SETTINGS_FRAME_HEIGHT = 263 + 60
 
 frame_settings = ctk.CTkFrame(
     master=singup_page, 
@@ -887,6 +985,17 @@ db_settings = ctk.CTkButton(
     )
 
 db_settings.place(x=_map_item_x(24, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(230, SETUP_TIME_FRAME_HEIGHT))
+
+draw_settings = ctk.CTkButton(
+    master=frame_settings,
+    bg_color=['gray92','gray14'],
+    text="Impostazioni Disegni",
+    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
+    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
+    command=lambda: show_draw_config_dialog()
+    )
+
+draw_settings.place(x=_map_item_x(24, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(270, SETUP_TIME_FRAME_HEIGHT))
 
 def get_user_databases():
     try:
@@ -1017,7 +1126,10 @@ def conferma_ordine():
     numero_pezzi = int(pezzi_select_num.get())
     orario_inizio_dt = orario_fine_dt - timedelta(minutes=tempo_setup + tempo_ciclo_totale)
     orario_inizio = orario_inizio_dt.strftime('%Y-%m-%d %H:%M:%S')
-    numero_disegno = str(draw_num_entry.get())
+    if draw_mode_checkbox.get():
+        numero_disegno = str(menu_tendina_disegni.get())
+    else:
+        numero_disegno = str(draw_num_entry.get())
     
     checkbox_data = selected_checkbox_text
 
@@ -1311,12 +1423,22 @@ def on_checkbox_change(checkbox_name):
         else:
             frame_elettro_time.place_forget()
 
+    elif checkbox_name == "draw_mode":
+        if draw_mode_checkbox.get():
+            draw_num_entry.place_forget()
+            menu_tendina_disegni.place(relx = 0.09, rely=0.4)
+        else:
+            draw_num_entry.place(relx = 0.09, rely=0.4)
+            menu_tendina_disegni.place_forget()
+
 
 # Associa la funzione on_checkbox_change a ciascun checkbox
 tornitura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("tornitura"))
 fresatura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("fresatura"))
 elettro_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("elettro"))
 taglio_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("taglio"))
+
+draw_mode_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("draw_mode"))
 
 root.bind("<Configure>", on_window_resize)
 
