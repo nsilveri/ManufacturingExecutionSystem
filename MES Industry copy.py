@@ -14,8 +14,10 @@ import subprocess
 import json
 import os
 import ctypes
-from libs import CTkPopupKeyboard
+from libs import CTkPopupKeyboard, CTkPDFViewer
+from libs.CTkPDFViewer import *
 import tkinter as tk
+#from CTkPDFViewer import *
 
 ORIGINAL_WIDTH =  800
 ORIGINAL_HEIGHT = 500
@@ -170,7 +172,7 @@ singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border
 login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 confirm_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 
-def get_files_in_directory(directory_path):
+def get_pdf_files_in_directory(directory_path):
     # Verifica se il percorso specificato è una directory
     if not os.path.isdir(directory_path):
         print(f"{directory_path} non è una directory valida.")
@@ -179,13 +181,13 @@ def get_files_in_directory(directory_path):
     # Ottieni la lista dei file nella directory
     files = os.listdir(directory_path)
     
-    # Filtra solo i file (escludendo le eventuali sottodirectory)
-    files = [file for file in files if os.path.isfile(os.path.join(directory_path, file))]
+    # Filtra solo i file con estensione .pdf
+    pdf_files = [file[:-4] for file in files if file.lower().endswith('.pdf') and os.path.isfile(os.path.join(directory_path, file))]
     
-    return files
+    return pdf_files
 
 directory_path = load_config("draw_directory")
-file_list = get_files_in_directory(directory_path)
+file_list = get_pdf_files_in_directory(directory_path)
 
 #FRAME TITLE
 FRAME_TITLE_WIDTH = 152
@@ -456,8 +458,23 @@ pezzi_select_num = CTkSpinbox(
         )
 pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44, N_PEZZI_FRAME_HEIGHT))
 
+def open_pdf():
+    pdf_dialog = ctk.CTkToplevel()
+    file_name = os.path.join(directory_path, str(menu_tendina_disegni.get()) + ".pdf")
+    pdf_dialog.title(file_name)
+    #pdf_dialog.geometry("700x600")
+    pdf_frame = CTkPDFViewer(master= pdf_dialog, file=file_name)
+    #pdf_frame.configure(file=file_name)
+    pdf_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    pdf_dialog.lift()  # Solleva la finestra di dialogo in primo piano
+
+    pdf_dialog.focus_set()  # Imposta il focus sulla finestra di dialogo
+    pdf_dialog.grab_set()   # Blocca l'input alle altre finestre
+    pdf_dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
+
 #FRAME DRAW
-N_DRAW_FRAME_WIDTH = 180
+N_DRAW_FRAME_WIDTH = 200
 N_DRAW_FRAME_HEIGHT = 90
 
 frame_n_draw = ctk.CTkFrame(
@@ -471,6 +488,18 @@ draw_mode_checkbox = ctk.CTkCheckBox(
     bg_color=['gray86', 'gray17'], 
     text="Auto"
     )
+
+# Carica la configurazione dal file .conf
+checkbox_auto = load_config("draw_mode_checkbox")
+print("checkbox_auto: " + str(checkbox_auto))
+
+# Imposta lo stato di spunta del checkbox in base al valore caricato
+if(checkbox_auto):
+    draw_mode_checkbox.select()
+elif(not checkbox_auto):
+    draw_mode_checkbox.deselect()
+else:
+    print("Conf not found")
 
 #draw_mode_checkbox.select()
 
@@ -495,7 +524,7 @@ menu_tendina_disegni = ctk.CTkOptionMenu(
     bg_color=['gray86', 'gray17'],
     #width=_map_item_x(140 + 10, N_DRAW_FRAME_WIDTH), 
     #height=_map_item_y(28 + 10, N_DRAW_FRAME_HEIGHT),
-    width= 140 + 10,
+    width= 140,# + 10,
     height= 28 + 10,
     dropdown_font = ctk.CTkFont(
         'Roboto',
@@ -505,10 +534,23 @@ menu_tendina_disegni = ctk.CTkOptionMenu(
 menu_tendina_disegni.configure(values=file_list)
 menu_tendina_disegni.set("Sel. num. disegno")
 
+draw_open_pdf_button = ctk.CTkButton(
+    master=frame_n_draw, 
+    width= 10,
+    height= 28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Apri",
+    command= lambda: open_pdf()
+    )
+
 if draw_mode_checkbox.get():
-    menu_tendina_disegni.place(relx = 0.09, rely=0.4)
+    menu_tendina_disegni.place(relx = 0.02, rely=0.4)
+    draw_open_pdf_button.place(relx = 0.775, rely=0.4)
 else:
-    draw_num_entry.place(relx = 0.09, rely=0.4)#(x=_map_item_x(25, N_DRAW_FRAME_WIDTH), y=_map_item_y(110, N_DRAW_FRAME_HEIGHT))
+    #draw_open_pdf_button.place_forget()
+    draw_num_entry.place(relx = 0.09, rely=0.4)
+    
+    #(x=_map_item_x(25, N_DRAW_FRAME_WIDTH), y=_map_item_y(110, N_DRAW_FRAME_HEIGHT))
 #menu_tendina_disegni.place(relx = 0.09, rely=0.4)#place(x=_map_item_x(15, N_DRAW_FRAME_WIDTH), y=_map_item_y(10, N_DRAW_FRAME_HEIGHT))
 
 #LAVORAZIONE FRAME
@@ -742,7 +784,7 @@ def show_draw_config_dialog():
 
     choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
     choose_button.grid(row=0, column=2, padx=5, pady=5)
-    
+    '''
     #auto_scan_var = ctk.CTkIntVar()
     auto_scan_checkbox = ctk.CTkCheckBox(
         dialog, 
@@ -751,7 +793,7 @@ def show_draw_config_dialog():
         command=toggle_auto_scan(auto_scan_checkbox.get())
         )
     auto_scan_checkbox.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
-
+    '''
     save_button = ctk.CTkButton(dialog, text="Salva", command=save_directory)
     save_button.grid(row=2, column=1, padx=5, pady=5)
 
@@ -1389,11 +1431,9 @@ def on_window_resize(event):
 
 def on_checkbox_change(checkbox_name):
     # Larghezza minima desiderata tra i frame
-    min_spacing = 10  # Modifica questa variabile secondo le tue esigenze
-    
+    min_spacing = 10  # Modifica questa variabile secondo le tue esigenze 
     # Posizione X del frame precedente
     prev_frame_x = 0
-
     RELY_FRAME_TIME = 0.02
     
     if(selected_checkbox_text):
@@ -1424,13 +1464,17 @@ def on_checkbox_change(checkbox_name):
             frame_elettro_time.place_forget()
 
     elif checkbox_name == "draw_mode":
-        if draw_mode_checkbox.get():
+        draw_check = draw_mode_checkbox.get()
+        if draw_check:
             draw_num_entry.place_forget()
-            menu_tendina_disegni.place(relx = 0.09, rely=0.4)
+            menu_tendina_disegni.place(relx = 0.02, rely=0.4)
+            draw_open_pdf_button.place(relx = 0.775, rely=0.4)
+            save_config("draw_mode_checkbox", draw_check)
         else:
             draw_num_entry.place(relx = 0.09, rely=0.4)
             menu_tendina_disegni.place_forget()
-
+            draw_open_pdf_button.place_forget()
+            save_config("draw_mode_checkbox", draw_check)
 
 # Associa la funzione on_checkbox_change a ciascun checkbox
 tornitura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("tornitura"))

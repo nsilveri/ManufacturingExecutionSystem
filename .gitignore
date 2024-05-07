@@ -70,9 +70,15 @@ CMakeLists.txt.user*
 # Binaries
 # --------
 *.dll
-*.exe
+#*.exe
 
 
 .history/
 
 .qtcreator/
+
+build/
+
+config.conf
+
+MES Industry copy.spec
