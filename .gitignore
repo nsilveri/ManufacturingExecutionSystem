@@ -82,3 +82,9 @@ build/
 config.conf
 
 MES Industry copy.spec
+
+dist/
+
+generate_mes_update.py
+
+update_configs.json
