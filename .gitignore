@@ -88,3 +88,5 @@ dist/
 generate_mes_update.py
 
 update_configs.json
+
+MES.spec

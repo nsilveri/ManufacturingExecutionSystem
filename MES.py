@@ -13,9 +13,7 @@ import sys
 import subprocess
 import json
 import os
-import ctypes
-from libs import CTkPopupKeyboard #, CTkPDFViewer
-from libs.CTkPDFViewer import *
+from libs import CTkPopupKeyboard
 import tkinter as tk
 import shutil
 #from CTkPDFViewer import *
@@ -1087,7 +1085,7 @@ settings_title_label.grid(row=0, column=0)
 
 # Creazione del frame per la num key scale Scale
 frame_num_board = ctk.CTkFrame(master=frame_settings)
-frame_num_board.grid(row=4, column=0, padx=10, pady=10)  
+frame_num_board.grid(row=5, column=0, padx=10, pady=10)  
 
 # Label per la KEYSIZE Scale
 num_board_scale_label_singup = ctk.CTkLabel(
@@ -1106,14 +1104,14 @@ num_board_select_num = CTkSpinbox(
     value=KEYWIDTH, 
     fg_color=['gray81', 'gray20']
 )
-num_board_select_num.grid(row=1, column=0)  
+num_board_select_num.grid(row=8, column=0)  
 
 # Colleghi la funzione di aggiornamento alla variazione del valore del CTkSpinbox
 num_board_select_num.configure(command=lambda: update_num_board(num_board_select_num.get()))
 
 # Creazione del frame per l'aspetto
 frame_appearance = ctk.CTkFrame(master=frame_settings)
-frame_appearance.grid(row=5, column=0, padx=10, pady=10)
+frame_appearance.grid(row=7, column=0, padx=10, pady=10)
 
 # Label per l'aspetto
 appearance_mode_label = ctk.CTkLabel(frame_appearance, text="Tema:", anchor="w")
@@ -1131,7 +1129,7 @@ appearance_mode_optionemenu.grid(row=1, column=0)
 
 # Label per il colore
 color_label = ctk.CTkLabel(frame_appearance, text="Colore:", anchor="w")
-color_label.grid(row=2, column=0)
+color_label.grid(row=6, column=0)
 
 # OptionMenu per selezionare il colore
 color_optionemenu = ctk.CTkOptionMenu(
@@ -1141,7 +1139,7 @@ color_optionemenu = ctk.CTkOptionMenu(
 )
 default_color_text = "Seleziona un colore"
 color_optionemenu.set(default_color_text)
-color_optionemenu.grid(row=4, column=0)
+color_optionemenu.grid(row=5, column=0)
 
 # Pulsante per le impostazioni del database
 db_settings = ctk.CTkButton(
@@ -1173,7 +1171,7 @@ run_update = ctk.CTkButton(
     height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
     command=lambda: show_draw_config_dialog()
 )
-run_update.grid(row=2, column=0)
+run_update.grid(row=3, column=0)
 
 # Pulsante per le impostazioni dei disegni
 update_settings = ctk.CTkButton(
@@ -1184,7 +1182,7 @@ update_settings = ctk.CTkButton(
     height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
     command=lambda: show_update_config_dialog()
 )
-update_settings.grid(row=3, column=0)
+update_settings.grid(row=4, column=0)
 
 def get_user_databases():
     try:
