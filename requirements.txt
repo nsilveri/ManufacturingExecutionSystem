@@ -1,0 +1,8 @@
+ctkdlib==5.0
+CTkMessagebox==2.5
+CTkMessagebox==2.5
+CTkTable==1.1
+CTkTable==1.1
+customtkinter==5.2.2
+Pillow==10.3.0
+psycopg2==2.9.9
