@@ -90,3 +90,19 @@ generate_mes_update.py
 update_configs.json
 
 MES.spec
+
+libs/elettroerosione.txt
+
+libs/CTkEntryDate/CTkEntryDate.py
+
+libs/fresatura.txt
+
+libs/map_func.py
+
+libs/note.txt
+
+libs/setup_time.py
+
+libs/taglio.txt
+
+libs/tornitura.txt

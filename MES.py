@@ -25,17 +25,74 @@ LOGGED_USER = ''
 LOGGED_USER_DB = ''
 DB_STATE = 'Non connesso'
 
+DRAW_NUM = ''
+
+PADX = 5
+ELAPSED_TIME_LABEL_X = 0.1
+ELAPSED_TIME_LABEL_Y = 0.3
+RELY_TIMER_BUTTONS = 0.59
+
+DATA_ORDER_CHANGE = False
+
+TABLE_ORDERS_ROW = 10
+
+UPDATE_TIMER_DELAY = 100
+
+LOAD_TEMP = True
+MENU_MODIFICA_DATI = False
+
+selected_row = None
+selected_column = None
+prev_selected_row = None
+prev_selected_column= None
+column_name = None
+column_value = None
+new_date = None
+
+recent_orders = []
+
 selected_checkbox = None
 selected_checkbox_text = ''
 
 root_width = ORIGINAL_WIDTH
 root_height = ORIGINAL_HEIGHT
 
+selected_order = None
 
 numpad_x = 0
 numpad_y = 0
 
+db_index_names = {
+    1: "orario_inizio",
+    2: "orario_fine",
+    3: "numero_disegno",
+    4: "tempo_taglio",
+    5: "tempo_tornitura",
+    6: "tempo_fresatura",
+    7: "tempo_elettroerosione",
+    8: "tempo_ciclo_totale",
+    9: "tempo_setup",
+    10: "numero_pezzi",
+    11: "note_lavorazione"
+}
+
 def load_config(conf_item, default=None):
+    default_config = {
+        "gui_scale": 0,
+        "theme": "Light",
+        "color": "blue",
+        "pg_host": "",
+        "pg_port": "",
+        "pg_user": "",
+        "pg_passwd": "",
+        "draw_directory": "",
+        "draw_mode_checkbox": 1,
+        "keywidth": 75,
+        "keyheight": 75,
+        "num_board_scale": 100,
+        "update_directory": ""
+    }
+    
     try:
         with open("config.conf", "r") as config_file:
             config_data = json.load(config_file)
@@ -48,12 +105,12 @@ def load_config(conf_item, default=None):
                     json.dump(config_data, updated_config_file)
                 return default
     except FileNotFoundError:
-        # Se il file di configurazione non esiste, creiamo un nuovo file di configurazione con il valore di default
+        # Se il file di configurazione non esiste, creiamo un nuovo file di configurazione con le impostazioni predefinite
         print(f"Configuration file not found, creating new config file with default value for '{conf_item}'.")
-        config_data = {conf_item: default}
+        config_data = default_config
         with open("config.conf", "w") as new_config_file:
             json.dump(config_data, new_config_file)
-        return default
+        return default_config[conf_item]
 
 def save_config(conf_item, value):
     try:
@@ -104,6 +161,7 @@ COLOR = load_config("color", "blue")
 KEYWIDTH = load_config("keywidth", 75)
 KEYHEIGHT = load_config("keyheight", 75)
 
+selected_start_datetime = None
 
 def restart_program():
     python = sys.executable
@@ -170,7 +228,7 @@ def _map_item_y(value, frame_dim_y):
 
 
 def switch_page(page):
-    pages = [home_page, singup_page, login_page]
+    pages = [home_page, singup_page, login_page, modify_order_page]
     for i in pages:
         i.pack_forget()
     page.pack(expand=True, fill='both')
@@ -179,6 +237,26 @@ def switch_page(page):
     for widget in fixed_widgets:
         widget.lift()
         widget.place(x=widget.winfo_x(), y=widget.winfo_y())
+
+def ask_question_choice(message):
+     # Creazione del messaggio di messagebox
+    msg = CTkMessagebox(
+        master= home_page,
+        title="Conferma ordine", 
+        message= message,
+        width=500,
+        icon="question", 
+        option_1="Conferma", 
+        option_2="No" 
+    )
+
+    # Ottieni la risposta dal messagebox
+    response = msg.get()
+    
+    if response=="Conferma":
+        return True
+    elif response=="No":
+        return False
 
 root = ctk.CTk()
 root.title("MES Industry")
@@ -189,7 +267,30 @@ home_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_w
 home_page.pack(expand=True, fill='both')
 singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-confirm_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+modify_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+
+def check_draw_exist_connection(db_config, codice_disegno):
+    try:
+        # Connessione al database
+        conn = psycopg2.connect(**{**db_config, 'dbname': LOGGED_USER_DB})
+        cur = conn.cursor()
+
+        # Esegue la query per verificare se il codice di disegno esiste nella tabella 'ordini'
+        cur.execute("SELECT * FROM ordini WHERE numero_disegno = %s", (codice_disegno,))
+        records = cur.fetchall()  # Recupera tutti i record corrispondenti alla query
+        conn.close()
+
+        if records:
+            # Se ci sono record corrispondenti, restituisci tutti i dati dei record trovati
+            print(f"records: {records}")
+            return records
+        else:
+            print("Nessun record trovato.")
+            return None
+
+    except (Exception, psycopg2.DatabaseError) as error:
+        print("Errore durante la connessione al database:", error)
+        return None
 
 def get_pdf_files_in_directory(directory_path):
     # Verifica se il percorso specificato è una directory
@@ -197,12 +298,29 @@ def get_pdf_files_in_directory(directory_path):
         print(f"{directory_path} non è una directory valida.")
         return []
 
-    # Ottieni la lista dei file nella directory
-    files = os.listdir(directory_path)
-    
-    # Filtra solo i file con estensione .pdf
-    pdf_files = [file[:-4] for file in files if file.lower().endswith('.pdf') and os.path.isfile(os.path.join(directory_path, file))]
-    
+    pdf_files = []
+    roots = set()
+    pdf_names = set()
+
+    # Attraversa ricorsivamente tutte le sottocartelle
+    for root, dirs, files in os.walk(directory_path):
+        for file in files:
+            if file.lower().endswith('.pdf'):
+                full_path = os.path.join(root, file).replace(directory_path, '')
+                pdf_files.append(full_path)
+                roots.add(root)
+                pdf_names.add(os.path.splitext(file)[0])
+
+    if len(roots) == 1:
+        # Se tutti i file PDF si trovano nella stessa directory, aggiungi solo i nomi dei PDF a pdf_files
+        pdf_files = list(pdf_names)
+    else:
+        # Se ci sono PDF in directory diverse, aggiungi i percorsi completi
+        pdf_files = list(pdf_files)
+
+    print(f"\nroots: {len(roots)} - {roots}")
+    print(f"\nfiles: {len(pdf_files)} - {pdf_files}")
+
     return pdf_files
 
 directory_path = load_config("draw_directory")
@@ -315,36 +433,379 @@ setting_button.place(x=_map_item_x(64, LOG_SET_FRAME_WIDTH), y=_map_item_y(4, LO
 
 #FRAME SETUP TIME 
 SETUP_TIME_FRAME_WIDTH = 210
-SETUP_TIME_FRAME_HEIGHT = 100
+SETUP_TIME_FRAME_HEIGHT_MANUAL = 100
+SETUP_TIME_FRAME_HEIGHT_AUTO = 150
+
+setup_paused_time = 0  # Variabile per memorizzare il tempo trascorso prima della pausa
+setup_elapsed_time = 0  # Variabile per memorizzare il tempo trascorso total
+elapsed_seconds = 0
+setup_minutes = 0
+setup_seconds = 0
+time_setup_timer_current_button = None
+
+# Funzione per avviare il setup
+def start_setup():
+    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button
+    time_setup_timer_current_button = 'start'
+    setup_button_stop.configure(state= "enabled")
+    setup_button_inizio.configure(state= "disabled")
+    if setup_start_time is None:
+        setup_start_time = time.time()
+    else:
+        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
+        setup_paused_time = time.time() - setup_paused_time  # Calcola il tempo di pausa
+        setup_start_time += setup_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
+    update_elapsed_time_setup()  # Avvia l'aggiornamento del tempo trascorso
+
+# Funzione per fermare il setup
+def stop_setup():
+    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button
+    time_setup_timer_current_button = 'stop'
+    setup_button_stop.configure(state= "disabled")
+    setup_button_inizio.configure(state= "enabled")
+    if setup_start_time is not None:
+        setup_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
+        setup_elapsed_time += setup_paused_time - setup_start_time  # Aggiorna il tempo totale trascorso
+        # setup_start_time = None  # Non resettare setup_start_time
+
+# Funzione per resettare il setup
+def reset_setup(type_req = None):
+    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button, setup_minutes, setup_seconds
+    if type_req == None:
+        if(not ask_question_choice("Sei sicuro di voler resettare il timer di setup?")):
+            return
+    time_setup_timer_current_button = 'reset'
+    setup_button_stop.configure(state="disabled")
+    setup_button_inizio.configure(state= "enabled")
+    setup_start_time = None  # Resetta setup_start_time
+    setup_paused_time = 0  # Resetta il tempo di pausa
+    setup_elapsed_time = 0  # Resetta il tempo trascorso totale
+    setup_minutes = 0
+    setup_seconds = 0
+    setup_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+
 
 #GENERAZIONE FRAME
 frame_setup_time = ctk.CTkFrame(
     master=home_page,
     width=_map_frame_x(SETUP_TIME_FRAME_WIDTH), 
-    height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT)
-    )
+    height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT_MANUAL)
+)
 
 #GENERAZIONE LABEL
 tempo_setup_label = ctk.CTkLabel(
-    master=frame_setup_time, bg_color=[
-        'gray86', 'gray17'], text="Tempo di setup (min)")
-tempo_setup_label.place(x=_map_item_x(18, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(6, SETUP_TIME_FRAME_HEIGHT))
+    master=frame_setup_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Tempo di setup (min)"
+)
+tempo_setup_label.place(x=_map_item_x(18, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(6, SETUP_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_setup_num = CTkSpinbox(
     master=frame_setup_time, 
     bg_color=['gray86', 'gray17'],
-    button_width = 50,
+    button_width=50,
     width=_map_item_x(76, SETUP_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, SETUP_TIME_FRAME_HEIGHT), 
+    height=_map_item_y(44, SETUP_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20']
-    )
-tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT))
+)
+tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
+
+#GENERAZIONE CHECKBOX
+setup_time_checkbox = ctk.CTkCheckBox(
+    master=frame_setup_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+)
+
+# Posizionare il checkbox all'interno del frame_setup_time
+setup_time_checkbox.place(relx=0.65, rely=0.1)
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+setup_button_inizio = ctk.CTkButton(
+    master=frame_setup_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Avvia",
+    command=lambda: start_setup()
+)
+
+setup_button_stop = ctk.CTkButton(
+    master=frame_setup_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Stop",
+    command=lambda: stop_setup()
+)
+
+setup_button_reset = ctk.CTkButton(
+    master=frame_setup_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Reset",
+    command=lambda: reset_setup()
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+setup_time_elapsed_label = ctk.CTkLabel(
+    master=frame_setup_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="{:d}:{:02d}".format(setup_minutes, setup_seconds)
+)
+setup_time_elapsed_label.place(relx=0.1, rely=0.6)
+
+setup_start_time = None
+
+# Funzione per aggiornare il tempo trascorso
+def update_elapsed_time_setup():
+    global time_setup_timer_current_button, elapsed_seconds, setup_seconds, setup_minutes, setup_start_time
+    if setup_start_time is not None and time_setup_timer_current_button == 'start':
+        if tempo_setup_num.get() != setup_minutes and not setup_time_checkbox.get():
+            time_diff = int(tempo_setup_num.get()) - setup_minutes
+            time_diff_seconds = time_diff * 60
+            setup_start_time -= time_diff_seconds
+
+        elapsed_seconds = int(time.time() - setup_start_time)
+        setup_minutes = elapsed_seconds // 60
+        setup_seconds = elapsed_seconds % 60
+        setup_time_elapsed_label.configure(text="{:d}:{:02d}".format(setup_minutes, setup_seconds))
+        if setup_minutes != tempo_setup_num.get() and setup_time_checkbox.get():
+            tempo_setup_num.configure(value=setup_minutes)
+    frame_setup_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_setup)  # Richiama se stesso ogni secondo
+
+def carica_temp():
+    global LOAD_TEMP
+    global selected_start_datetime, tempo_setup_num, pezzi_select_num, tempo_taglio_num, tempo_fresatura_num, tempo_tornitura_num, tempo_elettro_num, menu_tendina_disegni, draw_num_entry, note_num_entry
+    default_temp = {"selected_start_datetime": None, "tempo_setup_num": 0, "pezzi_select_num": 0, "tempo_taglio_num": 0, "tempo_fresatura_num": 0, "tempo_tornitura_num": 0, "tempo_elettro_num": 0, "menu_tendina_disegni": "Sel. num. disegno", "draw_num_entry": "", "note_num_entry": ""}
+    if LOAD_TEMP:
+        if LOGGED_USER != '':
+            file_name = f"{LOGGED_USER}_temp.json"
+            try:
+                with open(file_name, 'r') as f:
+                    data = json.load(f)
+                    print(data == default_temp)
+                    print(f'data: {data} \ndefa: {default_temp}')
+                if(data == default_temp):
+                    print("dati default trovati")
+                    return
+                restore = ask_question_choice(f"Sono stati trovati dati precedentemente inseriti per l'utente {LOGGED_USER}, vuoi ripristinarli?")
+                if not restore:
+                    LOAD_TEMP = False
+                    return
+                LOAD_TEMP = False
+
+                # Imposta le variabili globali con i valori dal file JSON
+                selected_start_datetime = data["selected_start_datetime"]
+                start_time_time_elapsed_label.configure(text= selected_start_datetime)
+                tempo_setup_num.configure(value= data["tempo_setup_num"])
+                pezzi_select_num.configure(value= data["pezzi_select_num"])
+                tempo_taglio_num.configure(value= data["tempo_taglio_num"])
+                tempo_fresatura_num.configure(value= data["tempo_fresatura_num"])
+                tempo_tornitura_num.configure(value= data["tempo_tornitura_num"])
+                tempo_elettro_num.configure(value= data["tempo_elettro_num"])
+                menu_tendina_disegni.set(str(data["menu_tendina_disegni"]))
+                #draw_num_entry.configure(textvariable= str(data["draw_num_entry"])) qui c'è UN BUG
+                #note_num_entry.configure(textvariable= str(data["note_num_entry"]))
+
+                LOAD_TEMP = False
+
+            except FileNotFoundError:
+                # Se il file non esiste, non fare nulla
+                LOAD_TEMP = False
+                pass
+
+# Dati precedenti
+previous_data = {}
+
+def salva_temp():
+    global LOAD_TEMP
+    global selected_start_datetime, previous_data
+    #print(LOAD_TEMP)
+    if LOGGED_USER != '' and not LOAD_TEMP:
+        # Dati attuali
+        current_data = {
+            "selected_start_datetime": selected_start_datetime,
+            "tempo_setup_num": tempo_setup_num.get(),
+            "pezzi_select_num": pezzi_select_num.get(),
+            "tempo_taglio_num": tempo_taglio_num.get(),
+            "tempo_fresatura_num": tempo_fresatura_num.get(),
+            "tempo_tornitura_num": tempo_tornitura_num.get(),
+            "tempo_elettro_num": tempo_elettro_num.get(),
+            "menu_tendina_disegni": menu_tendina_disegni.get(),
+            "draw_num_entry": draw_num_entry.get(),
+            "note_num_entry": note_num_entry.get()
+        }
+
+        # Confronta con i dati precedenti
+        if current_data != previous_data:
+            file_name = f"{LOGGED_USER}_temp.json"  # Nome del file JSON con la variabile user
+            with open(file_name, 'w') as f:
+                json.dump(current_data, f)
+            previous_data = current_data
+
+        # Richiama la funzione salva_temp dopo un certo intervallo di tempo
+    root.after(1000, lambda: salva_temp())
+
+# Esegui la funzione salva_temp all'inizio
+salva_temp()
+
+# Logica per mostrare i pulsanti solo quando il checkbox è selezionato
+def setup_toggle_buttons():
+    global setup_start_time, setup_minutes, setup_seconds
+    if setup_time_checkbox.get():
+        tempo_setup_num.place_forget()
+        #frame_setup_time.place(x=0, rely=0.5, anchor='w')
+        #if(setup_start_time != None):
+        #    setup_button_inizio.configure(text="Riprendi")
+        setup_button_inizio.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+        setup_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
+        setup_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+        setup_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+        setup_time_elapsed_label.configure(text="{:d}:{:02d}".format(setup_minutes, setup_seconds))
+        tempo_setup_label.configure(text="Tempo di setup")
+        setup_minutes = tempo_setup_num.get()
+        #frame_setup_time.configure(height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT_AUTO))
+        #setup_start_time = time.time()
+        update_elapsed_time_setup()  # Avvia l'aggiornamento del tempo trascorso
+    else:
+        setup_button_inizio.place_forget()
+        setup_button_stop.place_forget()
+        setup_button_reset.place_forget()
+        setup_time_elapsed_label.place_forget()
+        tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
+        #setup_start_time = None
+        tempo_setup_label.configure(text="Tempo di setup(min)")
+        #setup_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+        tempo_setup_num.configure(value=setup_minutes)
+
+# Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
+setup_time_checkbox.configure(command=setup_toggle_buttons)
+
+# Chiamata iniziale per impostare lo stato iniziale dei pulsanti
+setup_toggle_buttons()
+
+from datetime import datetime
+
+def show_datetime_dialog():
+    global selected_start_datetime
+
+    def save_datetime():
+        global selected_start_datetime
+        selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
+        selected_hour = int(hour_spinbox.get())
+        selected_minute = int(minute_spinbox.get())
+        selected_start_datetime = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
+        print("Data e ora inserite:", selected_start_datetime)
+        start_time_time_elapsed_label.configure(text= selected_start_datetime)
+        dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+
+    current_date = datetime.now()
+    current_hour = current_date.hour
+    current_minute = current_date.minute
+
+    dialog = ctk.CTkToplevel()
+    dialog.title("Inserisci data e ora d'inizio")
+
+    ctk.CTkLabel(master=dialog, text="Data:").grid(row=0, column=0, padx=5, pady=5)
+    day_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=31, height=44, value=current_date.day)
+    day_spinbox.grid(row=0, column=1, padx=5, pady=5)
+
+    ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=2)
+    month_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=12, height=44, value=current_date.month)
+    month_spinbox.grid(row=0, column=3, padx=5, pady=5)
+
+    ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=4)
+    year_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=current_date.year, to=current_date.year + 100, height=44, value=current_date.year)
+    year_spinbox.grid(row=0, column=5, padx=5, pady=5)
+
+    ctk.CTkLabel(master=dialog, text="Ora:").grid(row=1, column=0, padx=5, pady=5)
+    hour_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=23, width=76, height=44, value=current_hour)
+    hour_spinbox.grid(row=1, column=1, padx=5, pady=5)
+    
+    ctk.CTkLabel(master=dialog, text="Minuti:").grid(row=1, column=2, padx=5, pady=5)
+    minute_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=59, width=76, height=44, value=current_minute)
+    minute_spinbox.grid(row=1, column=3, padx=5, pady=5)
+
+    save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_datetime)
+    save_button.grid(row=2, column=0, columnspan=6, padx=5, pady=5)
+
+    dialog.lift()
+    dialog.focus_set()  
+    dialog.grab_set()   
+    dialog.wait_window()
+
+
+
+def set_start_time(MODE):
+    global selected_start_datetime
+    if MODE == 'current_date':
+        selected_start_datetime = time.strftime('%Y-%m-%d %H:%M:%S')
+        start_time_time_elapsed_label.configure(text= selected_start_datetime)
+        print(selected_start_datetime)
+    elif MODE == 'set_date':
+        show_datetime_dialog()
+        print(selected_start_datetime)
+
+#FRAME START TIME
+START_TIME_FRAME_WIDTH = 210
+START_TIME_FRAME_HEIGHT = 100
+
+#GENERAZIONE FRAME
+frame_start_time = ctk.CTkFrame(
+    master=home_page,
+    width=_map_frame_x(START_TIME_FRAME_WIDTH), 
+    height=_map_frame_y(START_TIME_FRAME_HEIGHT)
+)
+
+#GENERAZIONE LABEL
+tempo_start_time_label = ctk.CTkLabel(
+    master=frame_start_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Data e ora d'inizio"
+)
+tempo_start_time_label.place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+start_time_button_inizia_ora = ctk.CTkButton(
+    master=frame_start_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Inizia ora",
+    command=lambda: set_start_time('current_date')
+)
+
+start_time_button_imposta = ctk.CTkButton(
+    master=frame_start_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Imposta",
+    command=lambda: set_start_time('set_date')
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+start_time_time_elapsed_label = ctk.CTkLabel(
+    master=frame_start_time, 
+    bg_color=['gray86', 'gray17'], 
+    text= 'Da impostare'
+)
+start_time_time_elapsed_label.place(relx=0.1, rely=0.3)
+start_time_button_inizia_ora.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+start_time_button_imposta.place(relx=0.5, rely=RELY_TIMER_BUTTONS)
+#start_time_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+#tempo_start_time_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+#tempo_start_time_label.configure(text="Data e ora")
+tempo_setup_label.configure(text="Tempo di setup")
 
 #FRAME TIMES CONTAINER
 CONTAINER_TIME_FRAME_WIDTH = 890
 CONTAINER_TIME_FRAME_HEIGHT = 110
+CONTAINER_TIME_FRAME_HEIGHT_AUTO = 160
 
 frame_container_time = ctk.CTkScrollableFrame(
     master=home_page, 
@@ -359,119 +820,716 @@ frame_container_time.grid_columnconfigure(0, weight=110)
 #frame_container_time.pack()
 frame_container_time.place_forget()
 
-'''
-frame_container_time = ctk.CTkFrame(
-    master=home_page, 
-    width=CONTAINER_TIME_FRAME_WIDTH, 
-    height=CONTAINER_TIME_FRAME_HEIGHT,
-    
-    )
-'''
+#FRAME TAGLIO TIME 
+TAGLIO_TIME_FRAME_WIDTH= 210
+TAGLIO_TIME_FRAME_HEIGHT_MANUAL = 100
+TAGLIO_TIME_FRAME_HEIGHT_AUTO = 150
 
-#FRAME TAGLIO TIME
-TAGLIO_TIME_FRAME_WIDTH = 210
-TAGLIO_TIME_FRAME_HEIGHT = 100
+taglio_paused_time = 0 
+taglio_elapsed_time = 0  
+taglio_elapsed_seconds = 0
+taglio_minutes = 0
+taglio_seconds = 0
+time_taglio_timer_current_button = None
 
+# Funzione per avviare il taglio
+def start_taglio():
+    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button
+    time_taglio_timer_current_button = 'start'
+    taglio_button_stop.configure(state= "enabled")
+    taglio_button_inizio.configure(state= "disabled")
+    if taglio_start_time is None:
+        taglio_start_time = time.time()
+    else:
+        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
+        taglio_paused_time = time.time() - taglio_paused_time  # Calcola il tempo di pausa
+        taglio_start_time += taglio_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
+    update_elapsed_time_taglio()  # Avvia l'aggiornamento del tempo trascorso
+
+# Funzione per fermare il taglio
+def stop_taglio():
+    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button
+    time_taglio_timer_current_button = 'stop'
+    taglio_button_stop.configure(state= "disabled")
+    taglio_button_inizio.configure(state= "enabled")
+    if taglio_start_time is not None:
+        taglio_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
+        taglio_elapsed_time += taglio_paused_time - taglio_start_time  # Aggiorna il tempo totale trascorso
+        #taglio_start_time = None  # Resetta taglio_start_time
+
+
+def somma(primo_num, sec_num):
+    print(primo_num+sec_num)
+
+somma(5,6)
+# Funzione per resettare il taglio
+def reset_taglio(type_req = None):
+    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button, taglio_minutes, taglio_seconds
+    if type_req == None:
+        if(not ask_question_choice("Sei sicuro di voler resettare il timer di taglio?")):
+            return
+    time_taglio_timer_current_button = 'reset'
+    taglio_button_stop.configure(state="disabled")
+    taglio_button_inizio.configure(state= "enabled")
+    taglio_start_time = None  # Resetta taglio_start_time
+    taglio_paused_time = 0  # Resetta il tempo di pausa
+    taglio_elapsed_time = 0  # Resetta il tempo trascorso totale
+    taglio_minutes = 0
+    taglio_seconds = 0
+    taglio_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+
+
+#GENERAZIONE FRAME
 frame_taglio_time = ctk.CTkFrame(
     master=frame_container_time,
     width=TAGLIO_TIME_FRAME_WIDTH,#_map_frame_x(TAGLIO_TIME_FRAME_WIDTH),
-    height=TAGLIO_TIME_FRAME_HEIGHT#_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT)
+    height=TAGLIO_TIME_FRAME_HEIGHT_MANUAL#_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT)
     )
 
-frame_taglio_label = ctk.CTkLabel(
-    master=frame_taglio_time, bg_color=[
-        'gray86', 'gray17'], text="Tempo di taglio (min)")
-frame_taglio_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT))
+#GENERAZIONE LABEL
+taglio_time_label = ctk.CTkLabel(
+    master=frame_taglio_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Tempo di taglio (min)"
+)
+taglio_time_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 
+#GENERAZIONE SELEZIONA NUMERO
 tempo_taglio_num = CTkSpinbox(
     master=frame_taglio_time, 
     bg_color=['gray86', 'gray17'],
-    button_width = 50,
+    button_width=50,
     width=_map_item_x(76, TAGLIO_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, TAGLIO_TIME_FRAME_HEIGHT), 
+    height=_map_item_y(44, TAGLIO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20']
-    )
-tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT))
+)
+tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 
-#FRAME TORNITURA TIME
+#GENERAZIONE CHECKBOX
+taglio_time_checkbox = ctk.CTkCheckBox(
+    master=frame_taglio_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+)
+
+# Posizionare il checkbox all'interno del frame_container_time
+taglio_time_checkbox.place(relx=0.65, rely=0.1)
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+taglio_button_inizio = ctk.CTkButton(
+    master=frame_taglio_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Avvia",
+    command=lambda: start_taglio()
+)
+
+taglio_button_stop = ctk.CTkButton(
+    master=frame_taglio_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Stop",
+    command=lambda: stop_taglio()
+)
+
+taglio_button_reset = ctk.CTkButton(
+    master=frame_taglio_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Reset",
+    command=lambda: reset_taglio()
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+taglio_time_elapsed_label = ctk.CTkLabel(
+    master=frame_taglio_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds)
+)
+taglio_time_elapsed_label.place(relx=0.1, rely=0.6)
+
+taglio_start_time = None
+
+# Funzione per aggiornare il tempo trascorso
+def update_elapsed_time_taglio():
+    global time_taglio_timer_current_button, taglio_elapsed_seconds, taglio_seconds, taglio_minutes, taglio_start_time
+    if taglio_start_time is not None and time_taglio_timer_current_button == 'start':
+        if tempo_taglio_num.get() != taglio_minutes and not taglio_time_checkbox.get():
+            time_diff = int(tempo_taglio_num.get()) - taglio_minutes
+            time_diff_seconds = time_diff * 60
+            taglio_start_time -= time_diff_seconds
+
+        taglio_elapsed_seconds = int(time.time() - taglio_start_time)
+        taglio_minutes = taglio_elapsed_seconds // 60
+        taglio_seconds = taglio_elapsed_seconds % 60
+        taglio_time_elapsed_label.configure(text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds))
+        if(taglio_minutes > tempo_taglio_num.get() and taglio_time_checkbox.get()):
+            tempo_taglio_num.configure(value= taglio_minutes)
+    frame_container_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_taglio)  # Richiama se stesso ogni secondo
+
+# Logica per mostrare i pulsanti solo quando il checkbox è selezionato
+def taglio_toggle_buttons():
+    RELY_TIMER_BUTTONS = 0.6
+    global taglio_start_time, taglio_minutes, taglio_seconds, PADX
+    if taglio_time_checkbox.get():
+        tempo_taglio_num.place_forget()
+        #frame_taglio_time.grid(row=0, column=0, padx=PADX)
+        #if(taglio_start_time != None):
+        #    taglio_button_inizio.configure(text="Riprendi")
+        taglio_button_inizio.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+        taglio_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
+        taglio_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+        taglio_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+        taglio_time_elapsed_label.configure(text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds))
+        taglio_time_label.configure(text="Tempo di taglio")
+        #frame_container_time.configure(height=_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+        #taglio_start_time = time.time()
+        update_elapsed_time_taglio()  # Avvia l'aggiornamento del tempo trascorso
+    else:
+        taglio_button_inizio.place_forget()
+        taglio_button_stop.place_forget()
+        taglio_button_reset.place_forget()
+        taglio_time_elapsed_label.place_forget()
+        tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+        #taglio_start_time = None
+        taglio_time_label.configure(text="Tempo di taglio(min)")
+        #taglio_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+        tempo_taglio_num.configure(value=taglio_minutes)
+
+# Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
+taglio_time_checkbox.configure(command=taglio_toggle_buttons)
+
+# Chiamata iniziale per impostare lo stato iniziale dei pulsanti
+taglio_toggle_buttons()
+
+#FRAME TORNITURA TIME 
 TORNITURA_TIME_FRAME_WIDTH = 210
-TORNITURA_TIME_FRAME_HEIGHT = 100
+TORNITURA_TIME_FRAME_HEIGHT_MANUAL = 100
+TORNITURA_TIME_FRAME_HEIGHT_AUTO = 150
 
+tornitura_paused_time = 0  # Variabile per memorizzare il tempo trascorso prima della pausa
+tornitura_elapsed_time = 0  # Variabile per memorizzare il tempo trascorso total
+tornitura_elapsed_seconds = 0
+tornitura_minutes = 0
+tornitura_seconds = 0
+time_tornitura_timer_current_button = None
+
+# Funzione per avviare la tornitura
+def start_tornitura():
+    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button
+    time_tornitura_timer_current_button = 'start'
+    tornitura_button_stop.configure(state= "enabled")
+    tornitura_button_inizio.configure(state= "disabled")
+    if tornitura_start_time is None:
+        tornitura_start_time = time.time()
+    else:
+        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
+        tornitura_paused_time = time.time() - tornitura_paused_time  # Calcola il tempo di pausa
+        tornitura_start_time += tornitura_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
+    update_elapsed_time_tornitura()  # Avvia l'aggiornamento del tempo trascorso
+
+# Funzione per fermare la tornitura
+def stop_tornitura():
+    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button
+    time_tornitura_timer_current_button = 'stop'
+    tornitura_button_stop.configure(state= "disabled")
+    tornitura_button_inizio.configure(state= "enabled")
+    if tornitura_start_time is not None:
+        tornitura_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
+        tornitura_elapsed_time += tornitura_paused_time - tornitura_start_time  # Aggiorna il tempo totale trascorso
+        #tornitura_start_time = None  # Resetta tornitura_start_time
+
+# Funzione per resettare la tornitura
+def reset_tornitura(type_req = None):
+    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button, tornitura_minutes, tornitura_seconds
+    if type_req == None:
+        if(not ask_question_choice("Sei sicuro di voler resettare il timer di tornitura?")):
+            return
+    time_tornitura_timer_current_button = 'reset'
+    tornitura_button_stop.configure(state="disabled")
+    tornitura_button_inizio.configure(state= "enabled")
+    tornitura_start_time = None  # Resetta tornitura_start_time
+    tornitura_paused_time = 0  # Resetta il tempo di pausa
+    tornitura_elapsed_time = 0  # Resetta il tempo trascorso totale
+    tornitura_minutes = 0
+    tornitura_seconds = 0
+    tornitura_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+
+#GENERAZIONE FRAME
 frame_tornitura_time = ctk.CTkFrame(
     master=frame_container_time,
-    width=TORNITURA_TIME_FRAME_WIDTH, #_map_frame_x(TORNITURA_TIME_FRAME_WIDTH), 
-    height=TORNITURA_TIME_FRAME_HEIGHT #_map_frame_y(TORNITURA_TIME_FRAME_HEIGHT)
-    )
+    width=TORNITURA_TIME_FRAME_WIDTH,
+    height=TORNITURA_TIME_FRAME_HEIGHT_MANUAL
+)
 
-frame_tornitura_label = ctk.CTkLabel(
-    master=frame_tornitura_time, bg_color=[
-        'gray86', 'gray17'], text="Tempo di tornitura (min)")
-frame_tornitura_label.place(x=_map_item_x(18, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(6, TORNITURA_TIME_FRAME_HEIGHT))
+#GENERAZIONE LABEL
+tornitura_time_label = ctk.CTkLabel(
+    master=frame_tornitura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Tempo di tornitura (min)"
+)
+tornitura_time_label.place(x=_map_item_x(18, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(6, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
 
+#GENERAZIONE SELEZIONA NUMERO
 tempo_tornitura_num = CTkSpinbox(
     master=frame_tornitura_time, 
     bg_color=['gray86', 'gray17'],
-    button_width = 50,
+    button_width=50,
     width=_map_item_x(76, TORNITURA_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, TORNITURA_TIME_FRAME_HEIGHT), 
+    height=_map_item_y(44, TORNITURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20']
-    )
-tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT))
+)
+tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
+
+#GENERAZIONE CHECKBOX
+tornitura_time_checkbox = ctk.CTkCheckBox(
+    master=frame_tornitura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+)
+
+# Posizionare il checkbox all'interno del frame_tornitura_time
+tornitura_time_checkbox.place(relx=0.65, rely=0.1)
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+tornitura_button_inizio = ctk.CTkButton(
+    master=frame_tornitura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Avvia",
+    command=lambda: start_tornitura()
+)
+
+tornitura_button_stop = ctk.CTkButton(
+    master=frame_tornitura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Stop",
+    command=lambda: stop_tornitura()
+)
+
+tornitura_button_reset = ctk.CTkButton(
+    master=frame_tornitura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Reset",
+    command=lambda: reset_tornitura()
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+tornitura_time_elapsed_label = ctk.CTkLabel(
+    master=frame_tornitura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds)
+)
+tornitura_time_elapsed_label.place(relx=0.1, rely=0.6)
+
+tornitura_start_time = None
+
+# Funzione per aggiornare il tempo trascorso
+def update_elapsed_time_tornitura():
+    global time_tornitura_timer_current_button, tornitura_elapsed_seconds, tornitura_seconds, tornitura_minutes, tornitura_start_time
+    if tornitura_start_time is not None and time_tornitura_timer_current_button == 'start':
+        if tempo_tornitura_num.get() != tornitura_minutes and not tornitura_time_checkbox.get():
+            time_diff = int(tempo_tornitura_num.get()) - tornitura_minutes
+            time_diff_seconds = time_diff * 60
+            tornitura_start_time -= time_diff_seconds
+
+        tornitura_elapsed_seconds = int(time.time() - tornitura_start_time)
+        tornitura_minutes = tornitura_elapsed_seconds // 60
+        tornitura_seconds = tornitura_elapsed_seconds % 60
+        tornitura_time_elapsed_label.configure(text="{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds))
+        if(tornitura_minutes > tempo_tornitura_num.get() and tornitura_time_checkbox.get()):
+            tempo_tornitura_num.configure(value= tornitura_minutes)
+    frame_tornitura_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_tornitura)  # Richiama se stesso ogni secondo
+
+# Logica per mostrare i pulsanti solo quando il checkbox è selezionato
+def tornitura_toggle_buttons():
+    RELY_TIMER_BUTTONS = 0.6
+    global tornitura_start_time, tornitura_minutes, tornitura_seconds
+    if tornitura_time_checkbox.get():
+        tempo_tornitura_num.place_forget()
+        #frame_tornitura_time.place(x=0, rely=0.5, anchor='w')
+        tornitura_button_inizio.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+        tornitura_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
+        tornitura_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+        tornitura_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+        tornitura_time_elapsed_label.configure(text="{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds))
+        tornitura_time_label.configure(text="Tempo di tornitura")
+        update_elapsed_time_tornitura()
+    else:
+        tornitura_button_inizio.place_forget()
+        tornitura_button_stop.place_forget()
+        tornitura_button_reset.place_forget()
+        tornitura_time_elapsed_label.place_forget()
+        tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
+        tornitura_time_label.configure(text="Tempo di tornitura(min)")
+        tempo_tornitura_num.configure(value=tornitura_minutes)
+
+# Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
+tornitura_time_checkbox.configure(command=tornitura_toggle_buttons)
+
+# Chiamata iniziale per impostare lo stato iniziale dei pulsanti
+tornitura_toggle_buttons()
+
 
 #FRAME FRESATURA TIME
 FRESATURA_TIME_FRAME_WIDTH = 210
-FRESATURA_TIME_FRAME_HEIGHT = 100
+FRESATURA_TIME_FRAME_HEIGHT_MANUAL = 100
+FRESATURA_TIME_FRAME_HEIGHT_AUTO = 150
 
+fresatura_paused_time = 0  # Variabile per memorizzare il tempo trascorso prima della pausa
+fresatura_elapsed_time = 0  # Variabile per memorizzare il tempo trascorso total
+fresatura_elapsed_seconds = 0
+fresatura_minutes = 0
+fresatura_seconds = 0
+time_fresatura_timer_current_button = None
+
+# Funzione per avviare la fresatura
+def start_fresatura():
+    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button
+    time_fresatura_timer_current_button = 'start'
+    fresatura_button_stop.configure(state= "enabled")
+    fresatura_button_inizio.configure(state= "disabled")
+    if fresatura_start_time is None:
+        fresatura_start_time = time.time()
+    else:
+        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
+        fresatura_paused_time = time.time() - fresatura_paused_time  # Calcola il tempo di pausa
+        fresatura_start_time += fresatura_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
+    update_elapsed_time_fresatura()  # Avvia l'aggiornamento del tempo trascorso
+
+# Funzione per fermare la fresatura
+def stop_fresatura():
+    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button
+    time_fresatura_timer_current_button = 'stop'
+    fresatura_button_stop.configure(state= "disabled")
+    fresatura_button_inizio.configure(state= "enabled")
+    if fresatura_start_time is not None:
+        fresatura_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
+        fresatura_elapsed_time += fresatura_paused_time - fresatura_start_time  # Aggiorna il tempo totale trascorso
+        #fresatura_start_time = None  # Resetta fresatura_start_time
+
+# Funzione per resettare la fresatura
+def reset_fresatura(type_req = None):
+    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button, fresatura_minutes, fresatura_seconds
+    if type_req == None:
+        if(not ask_question_choice("Sei sicuro di voler resettare il timer di fresatura?")):
+            return
+    time_fresatura_timer_current_button = 'reset'
+    fresatura_button_stop.configure(state="disabled")
+    fresatura_button_inizio.configure(state= "enabled")
+    fresatura_start_time = None  # Resetta fresatura_start_time
+    fresatura_paused_time = 0  # Resetta il tempo di pausa
+    fresatura_elapsed_time = 0  # Resetta il tempo trascorso totale
+    fresatura_minutes = 0
+    fresatura_seconds = 0
+    fresatura_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+
+#GENERAZIONE FRAME
 frame_fresatura_time = ctk.CTkFrame(
     master=frame_container_time,
-    width=FRESATURA_TIME_FRAME_WIDTH, #_map_frame_x(FRESATURA_TIME_FRAME_WIDTH), 
-    height=FRESATURA_TIME_FRAME_HEIGHT #_map_frame_y(FRESATURA_TIME_FRAME_HEIGHT)
-    )
+    width=FRESATURA_TIME_FRAME_WIDTH,
+    height=FRESATURA_TIME_FRAME_HEIGHT_MANUAL
+)
 
-frame_fresatura_label = ctk.CTkLabel(
-    master=frame_fresatura_time, bg_color=[
-        'gray86', 'gray17'], text="Tempo di fresatura (min)")
-frame_fresatura_label.place(x=_map_item_x(18, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(6, FRESATURA_TIME_FRAME_HEIGHT))
+#GENERAZIONE LABEL
+fresatura_time_label = ctk.CTkLabel(
+    master=frame_fresatura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Tempo di fresatura (min)"
+)
+fresatura_time_label.place(x=_map_item_x(18, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(6, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
 
+#GENERAZIONE SELEZIONA NUMERO
 tempo_fresatura_num = CTkSpinbox(
     master=frame_fresatura_time, 
     bg_color=['gray86', 'gray17'],
-    button_width = 50,
+    button_width=50,
     width=_map_item_x(76, FRESATURA_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, FRESATURA_TIME_FRAME_HEIGHT), 
+    height=_map_item_y(44, FRESATURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20']
-    )
-tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT))
+)
+tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
+
+#GENERAZIONE CHECKBOX
+fresatura_time_checkbox = ctk.CTkCheckBox(
+    master=frame_fresatura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+)
+
+# Posizionare il checkbox all'interno del frame_fresatura_time
+fresatura_time_checkbox.place(relx=0.65, rely=0.1)
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+fresatura_button_inizio = ctk.CTkButton(
+    master=frame_fresatura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Avvia",
+    command=lambda: start_fresatura()
+)
+
+fresatura_button_stop = ctk.CTkButton(
+    master=frame_fresatura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Stop",
+    command=lambda: stop_fresatura()
+)
+
+fresatura_button_reset = ctk.CTkButton(
+    master=frame_fresatura_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Reset",
+    command=lambda: reset_fresatura()
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+fresatura_time_elapsed_label = ctk.CTkLabel(
+    master=frame_fresatura_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds)
+)
+fresatura_time_elapsed_label.place(relx=0.1, rely=0.6)
+
+fresatura_start_time = None
+
+# Funzione per aggiornare il tempo trascorso
+def update_elapsed_time_fresatura():
+    global time_fresatura_timer_current_button, fresatura_elapsed_seconds, fresatura_seconds, fresatura_minutes, fresatura_start_time
+    if fresatura_start_time is not None and time_fresatura_timer_current_button == 'start':
+        if tempo_fresatura_num.get() != fresatura_minutes and not fresatura_time_checkbox.get():
+            time_diff = int(tempo_fresatura_num.get()) - fresatura_minutes
+            time_diff_seconds = time_diff * 60
+            fresatura_start_time -= time_diff_seconds
+
+        fresatura_elapsed_seconds = int(time.time() - fresatura_start_time)
+        fresatura_minutes = fresatura_elapsed_seconds // 60
+        fresatura_seconds = fresatura_elapsed_seconds % 60
+        fresatura_time_elapsed_label.configure(text="{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds))
+        if(fresatura_minutes > tempo_fresatura_num.get() and fresatura_time_checkbox.get()):
+            tempo_fresatura_num.configure(value= fresatura_minutes)
+    frame_fresatura_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_fresatura)  # Richiama se stesso ogni secondo
+
+# Logica per mostrare i pulsanti solo quando il checkbox è selezionato
+def fresatura_toggle_buttons():
+    RELY_TIMER_BUTTONS = 0.6
+    global fresatura_start_time, fresatura_minutes, fresatura_seconds
+    if fresatura_time_checkbox.get():
+        tempo_fresatura_num.place_forget()
+        #frame_fresatura_time.place(x=0, rely=0.5, anchor='w')
+        fresatura_button_inizio.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+        fresatura_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
+        fresatura_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+        fresatura_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+        fresatura_time_elapsed_label.configure(text="{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds))
+        fresatura_time_label.configure(text="Tempo di fresatura")
+        update_elapsed_time_fresatura()  # Avvia l'aggiornamento del tempo trascorso
+    else:
+        fresatura_button_inizio.place_forget()
+        fresatura_button_stop.place_forget()
+        fresatura_button_reset.place_forget()
+        fresatura_time_elapsed_label.place_forget()
+        tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
+        fresatura_time_label.configure(text="Tempo di fresatura(min)")
+        tempo_fresatura_num.configure(value=fresatura_minutes)
+
+# Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
+fresatura_time_checkbox.configure(command=fresatura_toggle_buttons)
+
+# Chiamata iniziale per impostare lo stato iniziale dei pulsanti
+fresatura_toggle_buttons()
+
 
 #FRAME ELETTRO TIME
 ELETTRO_TIME_FRAME_WIDTH = 210
-ELETTRO_TIME_FRAME_HEIGHT = 100
+ELETTRO_TIME_FRAME_HEIGHT_MANUAL = 100
+ELETTRO_TIME_FRAME_HEIGHT_AUTO = 150
 
+elettro_paused_time = 0  # Variabile per memorizzare il tempo trascorso prima della pausa
+elettro_elapsed_time = 0  # Variabile per memorizzare il tempo trascorso total
+elettro_elapsed_seconds = 0
+elettro_minutes = 0
+elettro_seconds = 0
+time_elettro_timer_current_button = None
+
+# Funzione per avviare l'elettroerosione
+def start_elettro():
+    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button
+    time_elettro_timer_current_button = 'start'
+    elettro_button_stop.configure(state= "enabled")
+    elettro_button_inizio.configure(state= "disabled")
+    if elettro_start_time is None:
+        elettro_start_time = time.time()
+    else:
+        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
+        elettro_paused_time = time.time() - elettro_paused_time  # Calcola il tempo di pausa
+        elettro_start_time += elettro_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
+    update_elapsed_time_elettro()  # Avvia l'aggiornamento del tempo trascorso
+
+# Funzione per fermare l'elettroerosione
+def stop_elettro():
+    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button
+    time_elettro_timer_current_button = 'stop'
+    elettro_button_stop.configure(state= "disabled")
+    elettro_button_inizio.configure(state= "enabled")
+    if elettro_start_time is not None:
+        elettro_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
+        elettro_elapsed_time += elettro_paused_time - elettro_start_time  # Aggiorna il tempo totale trascorso
+        #elettro_start_time = None  # Resetta elettro_start_time
+
+# Funzione per resettare l'elettroerosione
+def reset_elettro(type_req= None):
+    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button, elettro_seconds, elettro_minutes
+    if type_req == None:
+        if(not ask_question_choice("Sei sicuro di voler resettare il timer di elettroerosione?")):
+            return
+    time_elettro_timer_current_button = 'reset'
+    elettro_button_stop.configure(state="disabled")
+    elettro_button_inizio.configure(state= "enabled")
+    elettro_start_time = None  # Resetta elettro_start_time
+    elettro_paused_time = 0  # Resetta il tempo di pausa
+    elettro_elapsed_time = 0  # Resetta il tempo trascorso totale
+    elettro_minutes = 0
+    elettro_seconds = 0
+    elettro_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
+
+#GENERAZIONE FRAME
 frame_elettro_time = ctk.CTkFrame(
     master=frame_container_time,
-    width=ELETTRO_TIME_FRAME_WIDTH, #_map_frame_x(ELETTRO_TIME_FRAME_WIDTH), 
-    height=ELETTRO_TIME_FRAME_HEIGHT#, #_map_frame_y(ELETTRO_TIME_FRAME_HEIGHT)
-    #fg_color= 'grey'
-    )
+    width=ELETTRO_TIME_FRAME_WIDTH,
+    height=ELETTRO_TIME_FRAME_HEIGHT_MANUAL
+)
 
-frame_elettro_label = ctk.CTkLabel(
-    master=frame_elettro_time, bg_color=[
-        'gray86', 'gray17'], text="Tempo di elettroerosione (m)")
-frame_elettro_label.place(x=_map_item_x(18, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(6, ELETTRO_TIME_FRAME_HEIGHT))
+#GENERAZIONE LABEL
+elettro_time_label = ctk.CTkLabel(
+    master=frame_elettro_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Tempo di elettroerosione (min)"
+)
+elettro_time_label.place(x=_map_item_x(18, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(6, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
 
+#GENERAZIONE SELEZIONA NUMERO
 tempo_elettro_num = CTkSpinbox(
     master=frame_elettro_time, 
     bg_color=['gray86', 'gray17'],
-    button_width = 50,
+    button_width=50,
     width=_map_item_x(76, ELETTRO_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, ELETTRO_TIME_FRAME_HEIGHT), 
+    height=_map_item_y(44, ELETTRO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20']
-    )
-tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT))
+)
+tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
+
+#GENERAZIONE CHECKBOX
+elettro_time_checkbox = ctk.CTkCheckBox(
+    master=frame_elettro_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+)
+
+# Posizionare il checkbox all'interno del frame_elettro_time
+elettro_time_checkbox.place(relx=0.65, rely=0.1)
+
+#GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
+elettro_button_inizio = ctk.CTkButton(
+    master=frame_elettro_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Avvia",
+    command=lambda: start_elettro()
+)
+
+elettro_button_stop = ctk.CTkButton(
+    master=frame_elettro_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Stop",
+    command=lambda: stop_elettro()
+)
+
+elettro_button_reset = ctk.CTkButton(
+    master=frame_elettro_time, 
+    width=10,
+    height=28 + 10,
+    bg_color=['gray92', 'gray14'],
+    text="Reset",
+    command=lambda: reset_elettro()
+)
+
+#GENERAZIONE LABEL PER IL TEMPO TRASCORSO
+elettro_time_elapsed_label = ctk.CTkLabel(
+    master=frame_elettro_time, 
+    bg_color=['gray86', 'gray17'], 
+    text="{:d}:{:02d}".format(elettro_minutes, elettro_seconds)
+)
+elettro_time_elapsed_label.place(relx=0.1, rely=0.6)
+
+elettro_start_time = None
+
+# Funzione per aggiornare il tempo trascorso
+def update_elapsed_time_elettro():
+    global time_elettro_timer_current_button, elettro_elapsed_seconds, elettro_seconds, elettro_minutes, elettro_start_time
+    if elettro_start_time is not None and time_elettro_timer_current_button == 'start':
+        if tempo_elettro_num.get() != elettro_minutes and not elettro_time_checkbox.get():
+            time_diff = int(tempo_elettro_num.get()) - elettro_minutes
+            time_diff_seconds = time_diff * 60
+            elettro_start_time -= time_diff_seconds
+
+        elettro_elapsed_seconds = int(time.time() - elettro_start_time)
+        elettro_minutes = elettro_elapsed_seconds // 60
+        elettro_seconds = elettro_elapsed_seconds % 60
+        elettro_time_elapsed_label.configure(text="{:d}:{:02d}".format(elettro_minutes, elettro_seconds))
+        if(elettro_minutes > tempo_elettro_num.get() and elettro_time_checkbox.get()):
+            tempo_elettro_num.configure(value= elettro_minutes)
+    frame_elettro_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_elettro)  # Richiama se stesso ogni secondo
+
+# Logica per mostrare i pulsanti solo quando il checkbox è selezionato
+def elettro_toggle_buttons():
+    RELY_TIMER_BUTTONS = 0.6
+    global elettro_start_time, elettro_minutes, elettro_seconds
+    if elettro_time_checkbox.get():
+        tempo_elettro_num.place_forget()
+        #frame_elettro_time.place(x=0, rely=0.5, anchor='w')
+        elettro_button_inizio.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+        elettro_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
+        elettro_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
+        elettro_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
+        elettro_time_elapsed_label.configure(text="{:d}:{:02d}".format(elettro_minutes, elettro_seconds))
+        elettro_time_label.configure(text="Tempo di elettroerosione")
+        update_elapsed_time_elettro()  # Avvia l'aggiornamento del tempo trascorso
+    else:
+        elettro_button_inizio.place_forget()
+        elettro_button_stop.place_forget()
+        elettro_button_reset.place_forget()
+        elettro_time_elapsed_label.place_forget()
+        tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
+        elettro_time_label.configure(text="Tempo di elettroerosione(min)")
+        tempo_elettro_num.configure(value=elettro_minutes)
+
+# Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
+elettro_time_checkbox.configure(command=elettro_toggle_buttons)
+
+# Chiamata iniziale per impostare lo stato iniziale dei pulsanti
+elettro_toggle_buttons()
+
 
 #PEZZI FRAME
 N_PEZZI_FRAME_WIDTH = 210
@@ -494,7 +1552,11 @@ pezzi_select_num = CTkSpinbox(
 pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44, N_PEZZI_FRAME_HEIGHT))
 
 def open_pdf():
-    file_name = os.path.join(directory_path, str(menu_tendina_disegni.get()) + ".pdf")
+    selected_menu_tendina = menu_tendina_disegni.get()
+    if(".pdf" in selected_menu_tendina):
+        file_name = os.path.join(directory_path, str(menu_tendina_disegni.get()))
+    elif(".pdf" not in selected_menu_tendina):
+        file_name = os.path.join(directory_path, str(menu_tendina_disegni.get()) + ".pdf")
     corrected_file_path = file_name.replace('/', '\\')
     print(corrected_file_path)
     try:
@@ -539,15 +1601,13 @@ elif(not checkbox_auto):
 else:
     print("Conf not found")
 
-#draw_mode_checkbox.select()
-
-draw_mode_checkbox.place(relx = 0.65, rely=0.1)#.place(x=_map_item_x(115, N_DRAW_FRAME_WIDTH), y=_map_item_y(8, N_DRAW_FRAME_HEIGHT))
+draw_mode_checkbox.place(relx = 0.65, rely=0.1)
 
 draw_num_label = ctk.CTkLabel(
     master=frame_n_draw, 
     bg_color=['gray92', 'gray14'], 
     text="Numero disegno")
-draw_num_label.place(relx = 0.09, rely=0.11)#x=_map_item_x(65, N_DRAW_FRAME_WIDTH), y=_map_item_y(75, N_DRAW_FRAME_HEIGHT))
+draw_num_label.place(relx = 0.09, rely=0.11)
 
 draw_num_entry = ctk.CTkEntry(
     master=frame_n_draw, 
@@ -560,14 +1620,13 @@ menu_tendina_disegni = ctk.CTkOptionMenu(
     master=frame_n_draw, 
     values=[], 
     bg_color=['gray86', 'gray17'],
-    #width=_map_item_x(140 + 10, N_DRAW_FRAME_WIDTH), 
-    #height=_map_item_y(28 + 10, N_DRAW_FRAME_HEIGHT),
     width= 140,# + 10,
     height= 28 + 10,
     dropdown_font = ctk.CTkFont(
         'Roboto',
         size=16),
-    hover=False)
+    hover=False
+    )
 
 menu_tendina_disegni.configure(values=file_list)
 menu_tendina_disegni.set("Sel. num. disegno")
@@ -587,9 +1646,6 @@ if draw_mode_checkbox.get():
 else:
     #draw_open_pdf_button.place_forget()
     draw_num_entry.place(relx = 0.09, rely=0.4)
-    
-    #(x=_map_item_x(25, N_DRAW_FRAME_WIDTH), y=_map_item_y(110, N_DRAW_FRAME_HEIGHT))
-#menu_tendina_disegni.place(relx = 0.09, rely=0.4)#place(x=_map_item_x(15, N_DRAW_FRAME_WIDTH), y=_map_item_y(10, N_DRAW_FRAME_HEIGHT))
 
 #LAVORAZIONE FRAME
 LAVORAZIONE_FRAME_WIDTH = 400
@@ -647,8 +1703,6 @@ def create_database(username):
         return None
 
 def perform_registration():
-    #username = menu_tendina_utenti.get()
-    #password = passwd_login_entry.get()
 
     username = user_singup_entry.get()
     password = passwd_singup_entry.get()
@@ -657,10 +1711,12 @@ def perform_registration():
 
     if password != confirm_password:
         #show_error_message("Errore, le password non corrispondono.", 24, 110)
-        CTkMessagebox(title="Errore di registrazione", 
-                  message="Le password non corrispondono!",
-                  icon="warning"
-                  )
+        CTkMessagebox(
+            master= login_page,
+            title="Errore di registrazione", 
+            message="Le password non corrispondono!",
+            icon="warning"
+            )
         return False
     
     try:
@@ -704,10 +1760,12 @@ def perform_registration():
     except psycopg2.Error as e:
         conn.rollback()
         #messagebox.showerror("Errore di registrazione", f"Errore durante l'inserimento dell'utente nel database: {e}")
-        CTkMessagebox(title="Errore di registrazione", 
-                message=f"Errore durante l'inserimento dell'utente nel database: {e}",
-                icon="warning"
-                )
+        CTkMessagebox(
+            master= singup_page,
+            title="Errore di registrazione", 
+            message=f"Errore durante l'inserimento dell'utente nel database: {e}",
+            icon="warning"
+            )
         return False
 
     finally:
@@ -715,7 +1773,9 @@ def perform_registration():
             if conn is not None:
                 conn.close()
         except:
-            CTkMessagebox(title="Errore di registrazione", 
+            CTkMessagebox(
+                master= singup_page,
+                title="Errore di registrazione", 
                 message="Errore di accesso al database",
                 icon="warning"
                 )
@@ -766,6 +1826,7 @@ def ask_question_db_conf(host, port, user, passwd):
 
     # Creazione del messaggio di messagebox
     msg = CTkMessagebox(
+        master= singup_page,
         title="Conferma impostazioni Postgres", 
         message=f"Impostazioni:\n\n{tabella}\nIl test della connessione ha dato esito positivo\nConferma per salvare?",
         width=500,
@@ -818,7 +1879,7 @@ def show_update_config_dialog():
     directory_update_label = ctk.CTkLabel(dialog, text="Directory:")
     directory_update_label.grid(row=0, column=0, padx=5, pady=5)
 
-    directory_update_entry = ctk.CTkEntry(dialog, width=50)
+    directory_update_entry = ctk.CTkEntry(dialog, width=250)
     directory_update_entry.grid(row=0, column=1, padx=5, pady=5)
 
     choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
@@ -868,11 +1929,12 @@ def show_draw_config_dialog():
             directory_entry.insert(0, directory_path)  # Inserisce il percorso selezionato nell'entry widget
 
     def save_directory():
+        global file_list
         chosen_directory = directory_entry.get()
         if chosen_directory:
-            # Ora puoi salvare il percorso della directory come preferisci
-            # Ad esempio, utilizzando la funzione save_config() che hai definito precedentemente
             save_config("draw_directory", chosen_directory)
+            file_list = get_pdf_files_in_directory(chosen_directory)
+            menu_tendina_disegni.configure(values=file_list)
             dialog.destroy()  # Chiude la finestra di dialogo dopo aver salvato il percorso
 
     def toggle_auto_scan(checkbox):
@@ -887,7 +1949,8 @@ def show_draw_config_dialog():
     directory_label = ctk.CTkLabel(dialog, text="Directory:")
     directory_label.grid(row=0, column=0, padx=5, pady=5)
 
-    directory_entry = ctk.CTkEntry(dialog, width=50)
+    directory_entry = ctk.CTkEntry(dialog, width=250)
+    directory_entry.insert(0, load_config("draw_directory") or '')
     directory_entry.grid(row=0, column=1, padx=5, pady=5)
 
     choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
@@ -1049,7 +2112,7 @@ back_button_singup = ctk.CTkButton(
     height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
     command=lambda: switch_page(home_page)
     )
-back_button_singup.place(x=_map_item_x(24, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(250, SETUP_TIME_FRAME_HEIGHT))
+back_button_singup.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(250, SINGUP_FRAME_HEIGHT))
 
 def change_appearance_mode_event(new_appearance_mode: str):
     save_config("theme", new_appearance_mode)
@@ -1184,6 +2247,37 @@ update_settings = ctk.CTkButton(
 )
 update_settings.grid(row=4, column=0)
 
+#FRAME NOTE
+N_NOTE_FRAME_WIDTH = 210
+N_NOTE_FRAME_HEIGHT = 100
+
+frame_note = ctk.CTkFrame(
+    master=home_page,
+    width=_map_frame_x(N_NOTE_FRAME_WIDTH), 
+    height=_map_frame_y(N_NOTE_FRAME_HEIGHT)
+    )
+
+note_mode_checkbox = ctk.CTkCheckBox(
+    master=frame_note, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+    )
+
+note_num_label = ctk.CTkLabel(
+    master=frame_note, 
+    bg_color=['gray92', 'gray14'], 
+    text="Aggiungi note")
+note_num_label.place(relx = 0.09, rely=0.11)
+
+note_num_entry = ctk.CTkEntry(
+    master=frame_note, 
+    width= 140 + 10,
+    height= 28 + 10,
+    bg_color=['gray92', 'gray14']
+    )
+
+note_num_entry.place(relx = 0.09, rely=0.4)
+
 def get_user_databases():
     try:
         # Connessione al database principale
@@ -1210,6 +2304,7 @@ def get_user_databases():
 def perform_login():#username, password):
     global LOGGED_USER
     global LOGGED_USER_DB
+    global LOAD_TEMP
 
     users_list = get_user_databases()
 
@@ -1219,10 +2314,12 @@ def perform_login():#username, password):
     try:
         # Verifica se il nome utente selezionato è presente nel menu a tendina
         if username not in users_list:
-            CTkMessagebox(title="Errore di login", 
-                  message="Utente non valido. Riprova!",
-                  icon="warning"
-                  )
+            CTkMessagebox(
+                master= login_page,
+                title="Errore di login", 
+                message="Utente non valido. Riprova!",
+                icon="warning"
+                )
             return
         
         # Aggiungiamo "_user" al nome del database
@@ -1243,25 +2340,34 @@ def perform_login():#username, password):
         import hashlib
         input_password_hash = hashlib.sha256(password.encode()).hexdigest()
         if input_password_hash == password_hash:
-            CTkMessagebox(title="Login", 
-                  message="Login effettuato con successo!",
-                  icon="info"
-                  )
+            CTkMessagebox(
+                master= home_page,
+                title="Login", 
+                message="Login effettuato con successo!",
+                icon="info"
+                )
             LOGGED_USER = username
             LOGGED_USER_DB = db_name
             update_db_user_state()
             switch_page(home_page)
+            carica_temp()
+            LOAD_TEMP = False
+            print("LOAD_TEMP: " + str(LOAD_TEMP))
         else:
-            CTkMessagebox(title="Errore di login", 
-                  message="Credenziali non valide. Riprova!",
-                  icon="info"
-                  )
+            CTkMessagebox(
+                master= login_page,
+                title="Errore di login", 
+                message="Credenziali non valide. Riprova!",
+                icon="info"
+                )
 
     except psycopg2.Error as e:
-        CTkMessagebox(title="Errore di login", 
-                  message=f"Errore durante la connessione al database: {e}",
-                  icon="info"
-                  )
+        CTkMessagebox(
+            master= login_page,
+            title="Errore di login", 
+            message=f"Errore durante la connessione al database: {e}",
+            icon="info"
+            )
 
     finally:
         if conn is not None:
@@ -1285,25 +2391,32 @@ def accedi():
             error_type = error_pass
         if(password == "" and username == defaul_user):
             error_type = error_user_pass
-        CTkMessagebox(title="Errore",
-                    message="Errore " + error_type,
-                    icon="warning"
-                    )
+        CTkMessagebox(
+            master= login_page,
+            title="Errore",
+            message="Errore " + error_type,
+            icon="warning"
+            )
         return
     
     perform_login()
 
-
-def conferma_ordine():
+def order_to_db(TABLE_NAME):
     global LOGGED_USER 
     global LOGGED_USER_DB
     global selected_checkbox_text
+    global selected_start_datetime
+
+    if draw_mode_checkbox.get():
+        numero_disegno = str(menu_tendina_disegni.get())
+    else:
+        numero_disegno = str(draw_num_entry.get())
+    
+    draw_exists = check_draw_exist_connection(db_config, numero_disegno)
 
     tipo_lavorazione = ''
     orario_fine = time.strftime('%Y-%m-%d %H:%M:%S')
-    #tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione,
-    # Calcola l'orario di inizio
-    orario_fine_dt = datetime.strptime(orario_fine, '%Y-%m-%d %H:%M:%S')
+    #orario_fine_dt = datetime.strptime(orario_fine, '%Y-%m-%d %H:%M:%S')
     tempo_setup = int(tempo_setup_num.get())
     tempo_taglio = int(tempo_taglio_num.get())
     tempo_tornitura = int(tempo_tornitura_num.get())
@@ -1311,13 +2424,13 @@ def conferma_ordine():
     tempo_elettroerosione = int(tempo_elettro_num.get())
     tempo_ciclo_totale = tempo_taglio + tempo_tornitura + tempo_fresatura + tempo_elettroerosione
     numero_pezzi = int(pezzi_select_num.get())
-    orario_inizio_dt = orario_fine_dt - timedelta(minutes=tempo_setup + tempo_ciclo_totale)
-    orario_inizio = orario_inizio_dt.strftime('%Y-%m-%d %H:%M:%S')
+    orario_inizio = selected_start_datetime
+    note_lavorazione = note_num_entry.get()
     if draw_mode_checkbox.get():
         numero_disegno = str(menu_tendina_disegni.get())
     else:
         numero_disegno = str(draw_num_entry.get())
-    
+
     checkbox_data = selected_checkbox_text
 
     errore_riempimento = False
@@ -1328,9 +2441,11 @@ def conferma_ordine():
     else:
         print("Nessun checkbox selezionato.")
         # or tempo_taglio == 0 or tempo_tornitura == 0 or tempo_fresatura == 0 or tempo_elettroerosione == 0 
+    
+    print("selected_start_datetime: " + str(selected_start_datetime))
 
     # Verifica se tutti i campi sono stati compilati e se il numero di pezzi è diverso da zero
-    if not all([orario_inizio, orario_fine, tipo_lavorazione, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '':
+    if not all([orario_inizio, orario_fine, tipo_lavorazione, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '' or selected_start_datetime == None:
         errore_riempimento = True
     
     if 'Taglio' in selected_checkbox_text and tempo_taglio == 0:
@@ -1345,7 +2460,6 @@ def conferma_ordine():
     if 'Elettroerosione' in selected_checkbox_text and tempo_elettroerosione == 0:
         errore_riempimento = True
 
-
     if(errore_riempimento):
         CTkMessagebox(title="Errore", 
                   message="Riempi tutti i campi prima di continuare!",
@@ -1353,13 +2467,17 @@ def conferma_ordine():
                   )
         return
 
-    tempo_ciclo_totale = tempo_taglio + tempo_tornitura + tempo_fresatura + tempo_elettroerosione
+    tempo_ciclo_totale = tempo_taglio + tempo_tornitura + tempo_fresatura + tempo_elettroerosione + tempo_setup
 
     #orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, tempo_ciclo, numero_pezzi
-    user_choose = ask_question(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, 
-                               tempo_fresatura, tempo_elettroerosione, tempo_ciclo_totale, 
-                               orario_inizio_dt, orario_inizio, numero_pezzi, numero_disegno)
+    user_choose = ask_question_confirm_order(orario_fine, tempo_setup, tempo_taglio, tempo_tornitura, 
+                               tempo_fresatura, tempo_elettroerosione, orario_inizio, 
+                               numero_pezzi, numero_disegno, note_lavorazione)
     if(not user_choose):
+        CTkMessagebox(title="Errore", 
+                  message="Devi accedere per confermare l'ordine!",
+                  icon="warning"
+                  )
         return
     
     conn = None
@@ -1371,34 +2489,49 @@ def conferma_ordine():
             conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
             cur = conn.cursor()
 
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS ordini (
+            print("TABLE_NAME: " + str(TABLE_NAME))
+
+            query = """
+                CREATE TABLE IF NOT EXISTS {} (
                     id SERIAL PRIMARY KEY,
                     orario_inizio TIMESTAMP,
                     orario_fine TIMESTAMP,
                     numero_disegno TEXT,
-                        
                     tempo_taglio INTEGER,
                     tempo_tornitura INTEGER,
                     tempo_fresatura INTEGER,
                     tempo_elettroerosione INTEGER,
                     tempo_ciclo_totale INTEGER,
-                    
                     tempo_setup INTEGER,
-                    numero_pezzi INTEGER
+                    numero_pezzi INTEGER,
+                    note_lavorazione TEXT
                 )
-            """)
+            """.format(TABLE_NAME)
 
-            cur.execute("""
-                INSERT INTO ordini (orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, tempo_ciclo_totale, numero_pezzi)
+            cur.execute(query)
+            
+            query = """
+                INSERT INTO {} (
+                    orario_inizio, 
+                    orario_fine, 
+                    numero_disegno, 
+                    tempo_taglio, 
+                    tempo_tornitura, 
+                    tempo_fresatura, 
+                    tempo_elettroerosione, 
+                    tempo_setup, 
+                    numero_pezzi, 
+                    note_lavorazione)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, tempo_ciclo_totale, numero_pezzi))
+            """.format(TABLE_NAME)
 
+            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione))
             conn.commit()
             CTkMessagebox(title="Chiusura ordine", 
                   message="Ordine chiuso con successo!",
                   icon="info"
                   )
+                  
         else:
             CTkMessagebox(title="Errore", 
                   message=f"Devi effettuare il login per poter concludere l'ordine!",
@@ -1416,11 +2549,505 @@ def conferma_ordine():
     finally:
         if conn is not None:
             conn.close()
+
+def riprendi_ordine():
+    print('riprendi ordine')
+
+def azzera_ordine():
+    global selected_start_datetime
+    ask_question_choice("Sei sicuro di voler azzerare l'ordine?")
+    tempo_setup_num.configure(value= 0)
+    pezzi_select_num.configure(value= 0)
+    tempo_taglio_num.configure(value= 0)
+    tempo_fresatura_num.configure(value= 0)
+    tempo_tornitura_num.configure(value= 0)
+    tempo_elettro_num.configure(value= 0)
+    menu_tendina_disegni.set("Sel. num. disegno")
+    draw_num_entry.delete('0', 'end')
+    start_time_time_elapsed_label.configure(text= 'Da impostare')
+    note_num_entry.delete('0', 'end')
+    selected_start_datetime = None
+    reset_elettro('force')
+    reset_fresatura('force')
+    reset_setup('force')
+    reset_tornitura('force')
+    reset_taglio('force')
     
-def ask_question(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_ciclo_totale, orario_inizio_dt, orario_inizio, numero_pezzi, numero_disegno):
+
+def get_last_orders(num_ordini):
+    global LOGGED_USER_DB
+    
+    try:
+        # Connessione al database
+        db_name = LOGGED_USER_DB
+
+        conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
+        cur = conn.cursor()
+
+        # Query per ottenere gli ultimi ordini
+        query = f"""
+            SELECT * FROM ordini
+            ORDER BY id DESC
+            LIMIT %s
+        """
+        cur.execute(query, (num_ordini,))
+        ultimi_ordini = cur.fetchall()
+
+        # Chiudi la connessione al database
+        cur.close()
+        conn.close()
+
+        return ultimi_ordini
+
+    except psycopg2.Error as e:
+        print("Errore durante l'interrogazione del database:", e)
+        return None
+
+def modifica_ordine():
+    global recent_orders, selected_order, TABLE_ORDERS_ROW
+    ORDER_MOD_BUTTON_WIDTH = 100
+
+    def forget_selected_order_frame():
+            global selected_order, selected_column, selected_row
+            selected_order = None
+            #selected_row = None
+            #selected_column = None
+            
+            table_selected_order.destroy()
+            button_elimina_ordine_selezionato.grid_forget()
+            button_modifica_ordine_selezionato.grid_forget()
+            frame_gestione_selezione_ordine_effettuato.grid_forget()
+            frame_buttons_selezione_ordine_effettuato.grid_forget()
+
+    def back_to_home():
+
+        frame_gestione_modifica_ordine_selezionato.place_forget()
+
+        button_modifica_ordine_selezionato.grid_forget()
+        button_elimina_ordine_selezionato.grid_forget()
+        frame_gestione_selezione_ordine_effettuato.place_forget()
+
+        button_conferma_modifica.grid_forget()
+        button_indietro_modifica.grid_forget()
+        frame_gestione_lista_ordini_effettuati.place_forget()
+        table_orders_list.destroy()
+        switch_page(home_page)
+
+    def print_selected(selected):
+        print("selected: " + str(selected))
+
+    def gestione_selezione():
+        
+        def draw_selected_order():
+            global selected_order
+            '''
+            label_seleted_table = ctk.CTkLabel(
+                master=frame_gestione_selezione_ordine_effettuato, 
+                bg_color=['gray86', 'gray17'], 
+                text="Seleziona l'elemento da modificare"
+            )
+            label_seleted_table.grid(row=0, padx=5, pady=10)
+            '''
+            intestazioni = ["ID", "Orario inizio", "Orario fine", "Numero disegno", "Tempo taglio", "Tempo tornitura", 
+                            "Tempo fresatura", "Tempo elettroerosione", "Tempo ciclo", "Tempo setup", "Numero pezzi", "Note lavorazione"]
+            
+            for col, intestazione in enumerate(intestazioni):
+                table_selected_order.insert(0, col, intestazione, bg_color="lightgrey")
+
+            # Popolamento della tabella con l'ordine selezionato
+            ordine = selected_order
+            for col, valore in enumerate(ordine, start=0):
+                if isinstance(valore, datetime):
+                    valore = valore.strftime("%Y-%m-%d %H:%M:%S")
+                table_selected_order.insert(1, col, valore)
+
+            table_selected_order.grid(row=1, padx=5, pady=10)
+
+        draw_selected_order()
+        if frame_gestione_selezione_ordine_effettuato.winfo_exists():
+            
+            button_modifica_ordine_selezionato.grid_forget()
+            frame_gestione_selezione_ordine_effettuato.grid_forget()
+
+        button_elimina_ordine_selezionato.grid( row=0, column=1, padx=10, pady=10)
+        frame_buttons_selezione_ordine_effettuato.grid(row=2, padx=10, pady=10)
+
+        frame_gestione_selezione_ordine_effettuato.place(relx=0.5, rely=0.8, anchor='s')
+
+    def show_row_select(cell):
+        global selected_row, prev_selected_row, selected_column, prev_selected_column, selected_order
+
+        if cell["row"] == 0:
+            return  # Non modificare l'intestazione
+
+        if selected_row is not None:
+            # Deseleziona la riga precedentemente selezionata
+            table_orders_list.deselect_row(selected_row)
+
+        if selected_column is not None:
+            # Deseleziona la colonna precedentemente selezionata
+            table_selected_order.deselect_column(selected_column)
+            selected_column = None
+
+        # Seleziona la nuova riga
+        selected = table_orders_list.get()[cell["row"]]
+        selected_order = selected
+        selected_row = cell["row"]
+        table_orders_list.edit_row(selected_row, fg_color=table_orders_list.hover_color)
+
+        gestione_selezione()
+
+        # Esegui altre azioni, se necessario, sulla riga selezionata
+        print_selected(selected)
+
+    def show_column_select(cell):
+        global selected_column, column_name, column_value
+
+        if cell["column"] == 0:
+            return  # Non modificare l'intestazione
+
+        if selected_column is not None:
+            # Deseleziona la colonna precedentemente selezionata
+            table_selected_order.deselect_column(selected_column)
+
+        # Seleziona la nuova colonna
+        selected_column = cell["column"]
+        column_name = table_selected_order.get()[0][selected_column]
+        column_value = table_selected_order.get()[1][selected_column]
+        table_selected_order.edit_column(selected_column, fg_color=table_selected_order.hover_color)
+
+        button_modifica_ordine_selezionato.grid(row=0, column=0, padx=10, pady=10)
+
+        # Esegui altre azioni, se necessario, sulla colonna selezionata
+        print(f'colonna: {column_name}, valore: {column_value}')
+
+    def update_db_value(id):
+        global selected_column, column_value, db_index_names
+        db_column_name = db_index_names[selected_column]
+        try:
+            db_name = LOGGED_USER_DB
+
+            conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
+            cur = conn.cursor()
+
+            # Genera la query di aggiornamento dinamicamente
+            query = f"""
+                UPDATE {'ordini'} 
+                SET {db_column_name} = %s
+                WHERE id = %s
+            """
+
+            # Eseguire la query di aggiornamento con il nuovo valore e l'ID del record da aggiornare
+            cur.execute(query, (column_value, id))
+            conn.commit()
+
+            CTkMessagebox(
+                title="Aggiornamento ordine",
+                message="Ordine aggiornato con successo!",
+                icon="info"
+            )
+            
+            #forget_selected_order_frame()
+
+
+        except psycopg2.Error as e:
+            print(e)
+            conn.rollback()
+            CTkMessagebox(
+                title="Errore",
+                message=f"Errore durante l'aggiornamento dell'ordine: {e}",
+                icon="info"
+            )
+
+    def int_modify_dialog(column_name):
+        global DATA_ORDER_CHANGE, column_value
+        
+        def save_int():
+            global column_value, DATA_ORDER_CHANGE
+            column_value = int_spinbox.get()
+            print(f"Modifica '{column_name}': {column_value}")
+            DATA_ORDER_CHANGE = True
+            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+
+        dialog = ctk.CTkToplevel()
+        dialog.title(f"Modifica {column_name}")
+
+        ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
+        int_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, height=44)  # Personalizza i valori di 'from_' e 'to' secondo le tue esigenze
+        int_spinbox.grid(row=0, column=1, padx=5, pady=5)
+        int_spinbox.set(column_value)
+
+        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_int)
+        save_button.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+
+        DATA_ORDER_CHANGE = False
+        
+        dialog.lift()
+        dialog.focus_set()  
+        dialog.grab_set()   
+        dialog.wait_window()
+
+    def string_modify_dialog(column_name):
+        global DATA_ORDER_CHANGE, column_value
+        def save_string():
+            global column_value, DATA_ORDER_CHANGE
+            column_value = entry_string.get()
+            print(f"Modifica '{column_name}': {column_value}")
+            DATA_ORDER_CHANGE = True
+            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+
+        dialog = ctk.CTkToplevel()
+        dialog.title(f"Modifica {column_name}")
+
+        ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
+        entry_string = ctk.CTkEntry(master=dialog, width=50, height=50)
+        entry_string.grid(row=0, column=1, padx=5, pady=5)
+        if(column_value == None):
+            column_value = ''
+            entry_string.insert(0, column_value)
+        else:
+            entry_string.insert(0, column_value)
+
+        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_string)
+        save_button.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+
+        DATA_ORDER_CHANGE = False
+        
+        dialog.lift()
+        dialog.focus_set()  
+        dialog.grab_set()   
+        dialog.wait_window()
+
+    def datetime_modify_dialog(datetime_to_mod):
+        global DATA_ORDER_CHANGE
+
+        def save_datetime():
+            global new_date, column_value, DATA_ORDER_CHANGE
+            selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
+            selected_hour = int(hour_spinbox.get())
+            selected_minute = int(minute_spinbox.get())
+            column_value = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
+            print("Data e ora inserite:", column_value)
+            #start_time_time_elapsed_label.configure(text= selected_start_datetime)
+            DATA_ORDER_CHANGE = True
+            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+
+        current_date = datetime.now()
+        current_hour = datetime_to_mod.hour
+        current_minute = datetime_to_mod.minute
+
+        dialog = ctk.CTkToplevel()
+        dialog.title("Inserisci data e ora d'inizio")
+
+        ctk.CTkLabel(master=dialog, text="Data:").grid(row=0, column=0, padx=5, pady=5)
+        day_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=31, height=44, value=datetime_to_mod.day)
+        day_spinbox.grid(row=0, column=1, padx=5, pady=5)
+
+        ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=2)
+        month_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=12, height=44, value=datetime_to_mod.month)
+        month_spinbox.grid(row=0, column=3, padx=5, pady=5)
+
+        ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=4)
+        year_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=datetime_to_mod.year, to=datetime_to_mod.year + 100, height=44, value=current_date.year)
+        year_spinbox.grid(row=0, column=5, padx=5, pady=5)
+
+        ctk.CTkLabel(master=dialog, text="Ora:").grid(row=1, column=0, padx=5, pady=5)
+        hour_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=23, width=76, height=44, value=current_hour)
+        hour_spinbox.grid(row=1, column=1, padx=5, pady=5)
+        
+        ctk.CTkLabel(master=dialog, text="Minuti:").grid(row=1, column=2, padx=5, pady=5)
+        minute_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=59, width=76, height=44, value=current_minute)
+        minute_spinbox.grid(row=1, column=3, padx=5, pady=5)
+
+        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_datetime)
+        save_button.grid(row=2, column=0, columnspan=6, padx=5, pady=5)
+
+        DATA_ORDER_CHANGE = False
+
+        dialog.lift()
+        dialog.focus_set()  
+        dialog.grab_set()   
+        dialog.wait_window()
+
+    def modifica_valore_colonna():
+        global selected_column, column_name, column_value, new_date, selected_order
+        print(f"modifica:\n{selected_column}\n{column_name}\n{column_value}")
+
+        if isinstance(column_value, str):
+            # Verifica se la stringa può essere convertita in un oggetto datetime
+            try:
+                column_value_datetime = datetime.strptime(column_value, "%Y-%m-%d %H:%M:%S")
+                datetime_modify_dialog(column_value_datetime)
+            except ValueError:
+                string_modify_dialog(column_name)
+        elif isinstance(column_value, int):
+            int_modify_dialog(column_name)
+        elif(isinstance, None):
+            string_modify_dialog(column_name)
+        else:
+            print("Tipo di dato non supportato.")
+        
+        selected_order[selected_column] = column_value
+        print(selected_order[selected_column])
+        table_selected_order.insert(1, selected_column, column_value)
+        table_orders_list.insert(selected_row, selected_column, column_value)
+        print(selected_order)
+        if DATA_ORDER_CHANGE:
+            print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
+            update_db_value(selected_order[0])
+        else:
+            print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
+        #table_selected_order.edit()
+
+
+
+
+    def conferma_modifica():
+        print("conferma")
+
+    def elimina_ordine():
+        global selected_order, selected_row
+
+        CHOICE = ask_question_choice(f"Sei sicuro di voler eliminare l'ordine con ID:{selected_order[0]}")
+
+        if CHOICE:
+            try:
+                db_name = LOGGED_USER_DB
+
+                conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
+                cur = conn.cursor()
+
+                query = """
+                    DELETE FROM {} 
+                    WHERE id = %s
+                """.format('ordini')
+
+                cur.execute(query, (selected_order[0],))
+                conn.commit()
+
+                CTkMessagebox(title="Eliminazione ordine", 
+                            message="Ordine eliminato con successo!",
+                            icon="info"
+                            )
+                    
+                table_orders_list.delete_row(selected_row)
+                draw_table_orders()
+                button_modifica_ordine_selezionato.grid_forget()
+                button_elimina_ordine_selezionato.grid_forget()
+                frame_gestione_selezione_ordine_effettuato.place_forget()
+
+            except (Exception, psycopg2.Error) as error:
+                print("Errore durante l'eliminazione dell'ordine:", error)
+
+            finally:
+                if conn:
+                    cur.close()
+                    conn.close()
+
+
+    #recent_orders = get_last_orders(TABLE_ORDERS_ROW)
+    
+    switch_page(modify_order_page)
+
+    table_orders_list = CTkTable(master=modify_order_page, width= 70, height= 38, row=TABLE_ORDERS_ROW + 1, command=show_row_select, column=12)
+    table_selected_order = CTkTable(master=frame_gestione_selezione_ordine_effettuato, width= 70, height= 38,  command=show_column_select, row=2, column=12)
+
+    def draw_table_orders():
+        global recent_orders
+
+        recent_orders = get_last_orders(TABLE_ORDERS_ROW)
+
+        intestazioni = ["ID", "Orario inizio", "Orario fine", "Numero disegno", "Tempo taglio", "Tempo tornitura", 
+                        "Tempo fresatura", "Tempo elettroerosione", "Tempo ciclo", "Tempo setup", "Numero pezzi", "Note lavorazione"]
+        
+        for col, intestazione in enumerate(intestazioni):
+            table_orders_list.insert(0, col, intestazione, bg_color="lightgrey")
+
+        # Popolamento della tabella con gli ordini
+        for row, ordine in enumerate(recent_orders, start=1):
+            for col, valore in enumerate(ordine, start=0):
+                if isinstance(valore, datetime):
+                    valore = valore.strftime("%Y-%m-%d %H:%M:%S")
+                #print(f"col: {col}, valore: {valore}")
+                table_orders_list.insert(row, col, valore)
+
+        table_orders_list.pack(expand=True, padx=20, pady=20, anchor='n')
+    
+    draw_table_orders()
+
+    frame_gestione_modifica_ordine_selezionato = ctk.CTkFrame(
+        master=modify_order_page,
+        width=ORDER_MAN_FRAME_WIDTH,
+        height=ORDER_MAN_FRAME_HEIGHT
+    )
+
+    # Creazione del frame
+    frame_gestione_lista_ordini_effettuati = ctk.CTkFrame(
+        master=modify_order_page,
+        width=ORDER_MAN_FRAME_WIDTH,
+        height=ORDER_MAN_FRAME_HEIGHT
+    )
+    
+    button_conferma_modifica = ctk.CTkButton(
+        master=frame_gestione_lista_ordini_effettuati, 
+        bg_color=['gray92', 'gray14'], 
+        text="Conferma ordine",
+        width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT)#,
+        #command=lambda: conferma_ordine()
+    )
+
+    button_indietro_modifica = ctk.CTkButton(
+        master=frame_gestione_lista_ordini_effettuati, 
+        bg_color=['gray92', 'gray14'], 
+        text="Indietro",
+        width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+        command=lambda: back_to_home()
+    )
+
+    button_conferma_modifica.configure(state= 'Disabled')
+
+    # Posizionamento del frame
+    frame_gestione_lista_ordini_effettuati.place(relx=0.5, rely=0.9, anchor='s')
+    #button_conferma_modifica.grid(row=0, column=0, padx=10, pady=10)
+    button_indietro_modifica.grid(row=0, column=3, padx=10, pady=10)
+
+    frame_buttons_selezione_ordine_effettuato = ctk.CTkFrame(
+        master=frame_gestione_selezione_ordine_effettuato,
+        width=ORDER_BUTTONS_FRAME_WIDTH,
+        height=ORDER_BUTTONS_FRAME_WIDTH
+    )
+
+    button_modifica_ordine_selezionato = ctk.CTkButton(
+        master=frame_buttons_selezione_ordine_effettuato, 
+        bg_color=['gray92', 'gray14'], 
+        text="Modifica ordine",
+        width=_map_item_x(140 + 10, ORDER_BUTTONS_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, ORDER_BUTTONS_FRAME_HEIGHT),
+        command=lambda: modifica_valore_colonna()
+    )
+
+    button_elimina_ordine_selezionato = ctk.CTkButton(
+        master=frame_buttons_selezione_ordine_effettuato, 
+        bg_color=['gray92', 'gray14'], 
+        text="Elimina ordine",
+        width=_map_item_x(140 + 10, ORDER_BUTTONS_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, ORDER_BUTTONS_FRAME_HEIGHT),
+        command=lambda: elimina_ordine()
+    )
+
+
+def salva_ordine():
+    order_to_db('ordini_in_sospeso')
+
+def conferma_ordine():
+    order_to_db('ordini')
+    
+def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, orario_inizio, numero_pezzi, numero_disegno, note_lavorazione):
     # Formattazione dei dati come una tabella
     tabella = (
-        f"{'INIZIO:':<20}{orario_inizio_dt}\n"
+        f"{'INIZIO:':<20}{orario_inizio}\n"
         f"{'FINE:':<20}{orario_fine_dt}\n"
         f"{'N DISEGNO:':<20}{numero_disegno}\n"
         f"{'SETUP:':<20}{tempo_setup} m\n"
@@ -1428,12 +3055,13 @@ def ask_question(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tem
         f"{'TORNITURA:':<20}{tempo_tornitura} m\n"
         f"{'FRESATURA:':<20}{tempo_fresatura} m\n"
         f"{'ELETTROEROSIONE:':<20}{tempo_elettroerosione} m\n"
-        f"{'CICLO TOT.:':<20}{tempo_ciclo_totale} m\n"
         f"{'N PEZZI:':<20}{numero_pezzi} prodotti\n"
+        f"{'NOTE.:':<20}{note_lavorazione[:10]}...\n"
     )
 
     # Creazione del messaggio di messagebox
     msg = CTkMessagebox(
+        master= home_page,
         title="Conferma ordine", 
         message=f"Dettagli dell'ordine:\n\n{tabella}\n\nSei sicuro di voler confermare?",
         width=500,
@@ -1445,18 +3073,14 @@ def ask_question(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tem
     # Ottieni la risposta dal messagebox
     response = msg.get()
 
-    
     if response=="Conferma":
         return True
     elif response=="Modifica":
         return False
 
-
-
 #LOGIN FRAME
 LOGIN_FRAME_WIDTH = 190 + 10
 LOGIN_FRAME_HEIGHT = 263 + 10
-
 
 frame_login = ctk.CTkFrame(
     master=login_page, 
@@ -1491,8 +3115,6 @@ passwd_label.place(x=_map_item_x(65, LOGIN_FRAME_WIDTH), y=_map_item_y(75, LOGIN
 login_button = ctk.CTkButton(
     master=frame_login, 
     bg_color=['gray92', 'gray14'], 
-    #width= 140,
-    #height= 28,
     width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
     height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
     text="Accedi")
@@ -1510,17 +3132,74 @@ back_login_button = ctk.CTkButton(
     text="Indietro")
 back_login_button.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(210, LOGIN_FRAME_HEIGHT))
 
+#FRAME GESTIONE ORDINE
+ORDER_MAN_FRAME_WIDTH = 400 
+ORDER_MAN_FRAME_HEIGHT = 200
+
+#FRAME GESTIONE ORDINE
+ORDER_BUTTONS_FRAME_WIDTH = 160
+ORDER_BUTTONS_FRAME_HEIGHT = 40
+
+# Creazione del frame
+frame_gestione_ordine = ctk.CTkFrame(
+    master=home_page,
+    width=ORDER_MAN_FRAME_WIDTH,
+    height=ORDER_MAN_FRAME_HEIGHT
+)
+
+# Creazione del pulsante all'interno del frame
 button_conferma_ordine = ctk.CTkButton(
-    master=home_page, 
+    master=frame_gestione_ordine, 
     bg_color=['gray92', 'gray14'], 
     text="Conferma ordine",
-    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    command=lambda: conferma_ordine())
-button_conferma_ordine.place(relx=0.5, rely=1.0, anchor='s')
+    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    command=lambda: conferma_ordine()
+)
+
+# Posizionamento del frame
+button_conferma_ordine.grid(row=0, column=0, padx=10, pady=10)
+
+button_salva_ordine = ctk.CTkButton(
+    master=frame_gestione_ordine, 
+    bg_color=['gray92', 'gray14'], 
+    text="Salva ordine",
+    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    command=lambda: salva_ordine()
+)
+
+# Posizionamento del frame
+#button_salva_ordine.grid(row=0, column=1, padx=10, pady=10)
+
+button_carica_ordine = ctk.CTkButton(
+    master=frame_gestione_ordine, 
+    bg_color=['gray92', 'gray14'], 
+    text="Ordini effettuati",
+    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    command=lambda: modifica_ordine()
+)
+
+# Posizionamento del frame
+button_carica_ordine.grid(row=0, column=2, padx=10, pady=10)
+
+button_reset_ordine = ctk.CTkButton(
+    master=frame_gestione_ordine, 
+    bg_color=['gray92', 'gray14'], 
+    text="Azzera ordine",
+    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    command=lambda: azzera_ordine()
+)
+
+# Posizionamento del frame
+button_reset_ordine.grid(row=0, column=3, padx=10, pady=10)
+
+
 
 pezzi_label = ctk.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
-pezzi_label.place(x=_map_item_x(55, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(8, SETUP_TIME_FRAME_HEIGHT))
+pezzi_label.place(x=_map_item_x(55, N_PEZZI_FRAME_WIDTH), y=_map_item_y(8, N_PEZZI_FRAME_HEIGHT))
 
 lista_utenti = get_user_databases() #["Utente1", "Utente2", "Utente3"]
 
@@ -1536,6 +3215,12 @@ menu_tendina_utenti = ctk.CTkOptionMenu(
     hover=False)
 menu_tendina_utenti.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(37, LOGIN_FRAME_HEIGHT))
 
+frame_gestione_selezione_ordine_effettuato = ctk.CTkFrame(
+        master=modify_order_page,
+        width=ORDER_MAN_FRAME_WIDTH,
+        height=ORDER_MAN_FRAME_HEIGHT
+    )
+
 #menu_tendina_utenti.
 menu_tendina_utenti.configure(values=lista_utenti)
 
@@ -1544,7 +3229,6 @@ default_text = "Seleziona un utente"  # Puoi cambiare questo testo se necessario
 menu_tendina_utenti.set(default_text)
 
 root.resizable(True, True)  # La finestra sarà ridimensionabile sia in larghezza che in altezza
-
 
 def on_window_resize(event):
     global root_height
@@ -1584,33 +3268,42 @@ def on_window_resize(event):
         # Calcola le coordinate per posizionare il numpad accanto al frame login
         numpad_x = frame_login_x + frame_login_width + 10  # Aggiungi 10 pixel di padding
         numpad_y = frame_login_y
-        #print("numpad_x: " + str(numpad_x) + ", numpad_y: " + str(numpad_y))
-
 
     if frame_n_pezzi.winfo_exists():
         frame_n_pezzi.place(relx=0.999, rely=0.5, anchor='e')
+
     if frame_lavorazione.winfo_exists():
         frame_lavorazione.place(relx=0.50, rely=0.1, anchor='n')
 
     if frame_setup_time.winfo_exists():
         frame_setup_time.place(x=0, rely=0.5, anchor='w')
 
+    if frame_start_time.winfo_exists():
+        frame_start_time.place(x=0, rely=0.3, anchor='w')
+
     if frame_log_setting.winfo_exists():
         frame_log_setting.place(relx=0.999, rely=0.003,anchor='ne')
+
     if frame_connection_title.winfo_exists():
         frame_connection_title.place(relx=0.999, rely=0.99, anchor='se')
+
     if frame_n_draw.winfo_exists():
         frame_n_draw.place(relx=0.50, rely=0.4, anchor='n')
 
-    button_conferma_ordine.place(relx=0.5, rely=0.9, anchor='s')
+    if frame_gestione_ordine.winfo_exists():
+        frame_gestione_ordine.place(relx=0.5, rely=0.9, anchor='s')
+        
+
+    if frame_note.winfo_exists():
+        frame_note.place(relx=0.999, rely=0.3, anchor='e')
 
 def on_checkbox_change(checkbox_name):
     # Larghezza minima desiderata tra i frame
-    PADX = 5
+    global PADX
     if(selected_checkbox_text):
         width_container_time_frame = 222.5 * len(selected_checkbox_text.split(", "))
         if(width_container_time_frame < root_width):
-            print(f"width_container_time_frame: {width_container_time_frame}, root_width: {root_width}")
+            #print(f"width_container_time_frame: {width_container_time_frame}, root_width: {root_width}")
             frame_container_time.place_forget()
             frame_container_time.configure(width = 222.5 * len(selected_checkbox_text.split(", ")))
         else:
@@ -1686,6 +3379,13 @@ elettro_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("elettro"))
 taglio_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("taglio"))
 
 draw_mode_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("draw_mode"))
+
+def schedule_check():
+    # Esegui il controllo e poi pianifica il prossimo controllo
+    check_db_connection(db_config)
+    root.after(5000, schedule_check)  # 5000 millisecondi = 5 secondi
+
+schedule_check()
 
 root.bind("<Configure>", on_window_resize)
 
