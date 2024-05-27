@@ -16,7 +16,6 @@ import os
 from libs import CTkPopupKeyboard
 import tkinter as tk
 import shutil
-#from CTkPDFViewer import *
 
 ORIGINAL_WIDTH =  800
 ORIGINAL_HEIGHT = 500
@@ -32,9 +31,12 @@ ELAPSED_TIME_LABEL_X = 0.1
 ELAPSED_TIME_LABEL_Y = 0.3
 RELY_TIMER_BUTTONS = 0.59
 
+PADX_FRAME_GESTIONE_ORDINI = 15
+PADY_FRAME_GESTIONE_ORDINI = 15
+
 DATA_ORDER_CHANGE = False
 
-TABLE_ORDERS_ROW = 10
+TABLE_ORDERS_ROW = 20
 
 UPDATE_TIMER_DELAY = 100
 
@@ -48,8 +50,12 @@ prev_selected_column= None
 column_name = None
 column_value = None
 new_date = None
+value_for_db = None
 
-recent_orders = []
+recent_orders_from_db = []
+
+intestazioni = ["ID", "Inizio", "Fine", "Numero disegno", "T. taglio", "T. tornitura", 
+                        "T. fresatura", "T. elettro..", "T. setup", "N pezzi", "Note", 'Commessa']
 
 selected_checkbox = None
 selected_checkbox_text = ''
@@ -57,12 +63,15 @@ selected_checkbox_text = ''
 root_width = ORIGINAL_WIDTH
 root_height = ORIGINAL_HEIGHT
 
-selected_order = None
+selected_order_from_table = None
 
 numpad_x = 0
 numpad_y = 0
 
-db_index_names = {
+#ctk.set_window_scaling(1)  # window geometry dimensions
+
+db_index_to_names = {
+    0: "id",
     1: "orario_inizio",
     2: "orario_fine",
     3: "numero_disegno",
@@ -70,15 +79,30 @@ db_index_names = {
     5: "tempo_tornitura",
     6: "tempo_fresatura",
     7: "tempo_elettroerosione",
-    8: "tempo_ciclo_totale",
-    9: "tempo_setup",
-    10: "numero_pezzi",
-    11: "note_lavorazione"
+    8: "tempo_setup",
+    9: "numero_pezzi",
+    10: "note_lavorazione",
+    11: "commessa_lavorazione"
+}
+
+db_names_to_index = {
+    "id": 0,
+    "orario_inizio": 1,
+    "orario_fine": 2,
+    "numero_disegno": 3,
+    "tempo_taglio": 4,
+    "tempo_tornitura": 5,
+    "tempo_fresatura": 6,
+    "tempo_elettroerosione": 7,
+    "tempo_setup": 8,
+    "numero_pezzi": 9,
+    "note_lavorazione": 10,
+    "commessa_lavorazione": 11
 }
 
 def load_config(conf_item, default=None):
     default_config = {
-        "gui_scale": 0,
+        "gui_scale": 100,
         "theme": "Light",
         "color": "blue",
         "pg_host": "",
@@ -97,6 +121,7 @@ def load_config(conf_item, default=None):
         with open("config.conf", "r") as config_file:
             config_data = json.load(config_file)
             if conf_item in config_data:
+                print(f'conf item:{conf_item}, {config_data[conf_item]}')
                 return config_data[conf_item]
             else:
                 print(f"Configuration '{conf_item}' not found, adding to config file with default value.")
@@ -137,6 +162,7 @@ db_config = {
 def update_gui_scale(new_value):
     global GUI_SCALE
     GUI_SCALE = new_value
+    ctk.set_widget_scaling(GUI_SCALE/100)  # widget dimensions and text size
     save_config("gui_scale", GUI_SCALE)
 
 def update_num_board(new_value):
@@ -156,12 +182,15 @@ def update_color(new_value):
     ctk.set_default_color_theme(load_config("color"))
 
 THEME = load_config("theme", "blue")
-GUI_SCALE = load_config("gui_scale", 0)
+GUI_SCALE = load_config("gui_scale", 1)
 COLOR = load_config("color", "blue")
 KEYWIDTH = load_config("keywidth", 75)
 KEYHEIGHT = load_config("keyheight", 75)
 
 selected_start_datetime = None
+
+ctk.set_widget_scaling(GUI_SCALE/100)  # widget dimensions and text size
+ctk.set_window_scaling(1)  # window geometry dimensions
 
 def restart_program():
     python = sys.executable
@@ -192,8 +221,10 @@ def _map_rel_y(value):
 
 def _map_frame_x(value):
     global GUI_SCALE
+    gui_scale_int = GUI_SCALE/100
+
     if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, value, 0, (value + GUI_SCALE)))
+        value_adapted = int(_map(value, 0, value, 0, (value + gui_scale_int)))
         #print("value_frame_x: " + str(value) + "---> " + str(value_adapted))
         return value_adapted
     else:
@@ -201,8 +232,10 @@ def _map_frame_x(value):
 
 def _map_frame_y(value):
     global GUI_SCALE
+    gui_scale_int = GUI_SCALE/100
+
     if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, value, 0, (value + GUI_SCALE)))
+        value_adapted = int(_map(value, 0, value, 0, (value + gui_scale_int)))
         #print("value_frame_y: " + str(value) + "---> " + str(value_adapted) + "")
         return value_adapted
     else:
@@ -210,18 +243,20 @@ def _map_frame_y(value):
     
 def _map_item_x(value, frame_dim_x):
     global GUI_SCALE
+    gui_scale_int = GUI_SCALE/100
+
     if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, frame_dim_x, 0, (frame_dim_x + GUI_SCALE)))
-        #print("value_item_x: " + str(value) + "---> " + str(value_adapted))
+        value_adapted = int(_map(value, 0, frame_dim_x, 0, (frame_dim_x + gui_scale_int)))
         return value_adapted
     else:
         return value
 
 def _map_item_y(value, frame_dim_y):
     global GUI_SCALE
+    gui_scale_int = GUI_SCALE/100
+    
     if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, frame_dim_y, 0, (frame_dim_y + GUI_SCALE)))
-        #print("value_item_y: " + str(value) + "---> " + str(value_adapted) + "")
+        value_adapted = int(_map(value, 0, frame_dim_y, 0, (frame_dim_y + gui_scale_int)))
         return value_adapted
     else:
         return value
@@ -293,38 +328,49 @@ def check_draw_exist_connection(db_config, codice_disegno):
         return None
 
 def get_pdf_files_in_directory(directory_path):
-    # Verifica se il percorso specificato è una directory
-    if not os.path.isdir(directory_path):
-        print(f"{directory_path} non è una directory valida.")
-        return []
+    try:
+        # Verifica se il percorso specificato è una directory
+        if not os.path.isdir(directory_path):
+            print(f"{directory_path} non è una directory valida.")
+            return []
 
-    pdf_files = []
-    roots = set()
-    pdf_names = set()
+        pdf_files = []
+        roots = set()
+        pdf_names = set()
 
-    # Attraversa ricorsivamente tutte le sottocartelle
-    for root, dirs, files in os.walk(directory_path):
-        for file in files:
-            if file.lower().endswith('.pdf'):
-                full_path = os.path.join(root, file).replace(directory_path, '')
-                pdf_files.append(full_path)
-                roots.add(root)
-                pdf_names.add(os.path.splitext(file)[0])
+        # Attraversa ricorsivamente tutte le sottocartelle
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                if file.lower().endswith('.pdf'):
+                    full_path = os.path.join(root, file).replace(directory_path, '')
+                    pdf_files.append(full_path)
+                    roots.add(root)
+                    pdf_names.add(os.path.splitext(file)[0])
 
-    if len(roots) == 1:
-        # Se tutti i file PDF si trovano nella stessa directory, aggiungi solo i nomi dei PDF a pdf_files
-        pdf_files = list(pdf_names)
-    else:
-        # Se ci sono PDF in directory diverse, aggiungi i percorsi completi
-        pdf_files = list(pdf_files)
+        if len(roots) == 1:
+            # Se tutti i file PDF si trovano nella stessa directory, aggiungi solo i nomi dei PDF a pdf_files
+            pdf_files = list(pdf_names)
+        else:
+            # Se ci sono PDF in directory diverse, aggiungi i percorsi completi
+            pdf_files = list(pdf_files)
 
-    print(f"\nroots: {len(roots)} - {roots}")
-    print(f"\nfiles: {len(pdf_files)} - {pdf_files}")
+        print(f"\nroots: {len(roots)} - {roots}")
+        print(f"\nfiles: {len(pdf_files)} - {pdf_files}")
 
-    return pdf_files
+        return pdf_files
+    except:
+        print("Errore durante la lettura dei file PDF nella directory.")
+        CTkMessagebox(
+            master=home_page,
+            title="Errore",
+            message="Errore durante la lettura dei file PDF nella directory.",
+            icon="error",
+            option_1="OK"
+        )
+        return []        
 
 directory_path = load_config("draw_directory")
-file_list = get_pdf_files_in_directory(directory_path)
+pdf_file_list = get_pdf_files_in_directory(directory_path)
 
 #FRAME TITLE
 FRAME_TITLE_WIDTH = 152
@@ -361,8 +407,6 @@ frame_connection_title = ctk.CTkFrame(
     height=_map_frame_y(FRAME_CONN_HEIGHT)
     )
 
-
-
 connection_state_text = "Utente: " + LOGGED_USER + "DB: " + DB_STATE
 
 label_connessione = ctk.CTkLabel(
@@ -395,6 +439,13 @@ def update_db_user_state():
     # Ora posiziona il label al centro del frame
     label_connessione.place(x=_map_item_x(10, FRAME_CONN_WIDTH), rely=0.5, anchor="w")  # Ancoraggio a sinistra
 
+def switch_page_for_login():
+    global users_list
+    if users_list == ["Errore1", "Errore2", "Errore3"]:
+        users_list = get_user_databases()
+    menu_tendina_utenti.configure(values=users_list)
+    switch_page(login_page)
+
 #FRAME LOGIN SETTINGS
 LOG_SET_FRAME_WIDTH = 106# + 20
 LOG_SET_FRAME_HEIGHT = 40# + 20
@@ -412,9 +463,8 @@ login_button = ctk.CTkButton(
     width=_map_item_x(50 + 5, LOG_SET_FRAME_WIDTH),
     height=_map_item_y(30 + 5, LOG_SET_FRAME_HEIGHT),
     text="Login",
-    command=lambda: switch_page(login_page))
-
-login_button.place(x=_map_item_x(6, LOG_SET_FRAME_WIDTH), y=_map_item_y(4, LOG_SET_FRAME_HEIGHT))
+    command=lambda: switch_page_for_login()
+    )
 
 setting_button = ctk.CTkButton(
     master=frame_log_setting,
@@ -429,7 +479,9 @@ setting_button = ctk.CTkButton(
         Image.open(r'libs\gear_icon.png'),
         size=(20,20)),
         command=lambda: switch_page(singup_page))
-setting_button.place(x=_map_item_x(64, LOG_SET_FRAME_WIDTH), y=_map_item_y(4, LOG_SET_FRAME_HEIGHT))
+
+login_button.grid(row=0, column= 0, padx= 5, pady= 5)
+setting_button.grid(row=0, column= 1, padx= 5, pady= 5)
 
 #FRAME SETUP TIME 
 SETUP_TIME_FRAME_WIDTH = 210
@@ -767,7 +819,7 @@ tempo_start_time_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Data e ora d'inizio"
 )
-tempo_start_time_label.place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
+
 
 #GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
 start_time_button_inizia_ora = ctk.CTkButton(
@@ -794,12 +846,12 @@ start_time_time_elapsed_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text= 'Da impostare'
 )
-start_time_time_elapsed_label.place(relx=0.1, rely=0.3)
-start_time_button_inizia_ora.place(relx=0.1, rely=RELY_TIMER_BUTTONS)
-start_time_button_imposta.place(relx=0.5, rely=RELY_TIMER_BUTTONS)
-#start_time_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
-#tempo_start_time_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
-#tempo_start_time_label.configure(text="Data e ora")
+
+tempo_start_time_label.grid(        row= 0, column= 0, padx= 5, pady= 5)#place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
+start_time_time_elapsed_label.grid( row= 2, column= 0, padx= 5, pady= 5)#place(relx=0.1, rely=0.3)
+start_time_button_inizia_ora.grid(  row= 3, column= 0, padx= 5, pady= 5)#place(relx=0.1, rely=RELY_TIMER_BUTTONS)
+start_time_button_imposta.grid(     row= 3, column= 1, padx= 5, pady= 5)#place(relx=0.5, rely=RELY_TIMER_BUTTONS)
+
 tempo_setup_label.configure(text="Tempo di setup")
 
 #FRAME TIMES CONTAINER
@@ -817,7 +869,6 @@ frame_container_time = ctk.CTkScrollableFrame(
     )#ctk.CTkScrollableFrame(label_text="CTkScrollableFrame")
 
 frame_container_time.grid_columnconfigure(0, weight=110)
-#frame_container_time.pack()
 frame_container_time.place_forget()
 
 #FRAME TAGLIO TIME 
@@ -825,8 +876,8 @@ TAGLIO_TIME_FRAME_WIDTH= 210
 TAGLIO_TIME_FRAME_HEIGHT_MANUAL = 100
 TAGLIO_TIME_FRAME_HEIGHT_AUTO = 150
 
-taglio_paused_time = 0 
-taglio_elapsed_time = 0  
+taglio_paused_time = 0
+taglio_elapsed_time = 0
 taglio_elapsed_seconds = 0
 taglio_minutes = 0
 taglio_seconds = 0
@@ -857,11 +908,6 @@ def stop_taglio():
         taglio_elapsed_time += taglio_paused_time - taglio_start_time  # Aggiorna il tempo totale trascorso
         #taglio_start_time = None  # Resetta taglio_start_time
 
-
-def somma(primo_num, sec_num):
-    print(primo_num+sec_num)
-
-somma(5,6)
 # Funzione per resettare il taglio
 def reset_taglio(type_req = None):
     global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button, taglio_minutes, taglio_seconds
@@ -892,7 +938,6 @@ taglio_time_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Tempo di taglio (min)"
 )
-taglio_time_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_taglio_num = CTkSpinbox(
@@ -904,7 +949,6 @@ tempo_taglio_num = CTkSpinbox(
     value=0, 
     fg_color=['gray81', 'gray20']
 )
-tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE CHECKBOX
 taglio_time_checkbox = ctk.CTkCheckBox(
@@ -914,7 +958,13 @@ taglio_time_checkbox = ctk.CTkCheckBox(
 )
 
 # Posizionare il checkbox all'interno del frame_container_time
+taglio_time_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 taglio_time_checkbox.place(relx=0.65, rely=0.1)
+tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+
+#grid(   row= 0, column= 0,                padx=5, pady= 5 )#
+#grid(row= 0, column= 1,                padx=5, pady= 5 )#place(
+#grid(    row= 2, columnspan= 2, padx=5, pady= 5 )#
 
 #GENERAZIONE PULSANTI "INIZIO", "STOP" E "RESET"
 taglio_button_inizio = ctk.CTkButton(
@@ -1577,14 +1627,22 @@ def open_pdf():
 N_DRAW_FRAME_WIDTH = 200
 N_DRAW_FRAME_HEIGHT = 90
 
-frame_n_draw = ctk.CTkFrame(
+frame_draw_commessa = ctk.CTkFrame(
     master=home_page,
     width=_map_frame_x(N_DRAW_FRAME_WIDTH), 
     height=_map_frame_y(N_DRAW_FRAME_HEIGHT)
     )
 
+frame_n_draw = ctk.CTkFrame(master=frame_draw_commessa)
+frame_n_draw_label_auto_button = ctk.CTkFrame(master=frame_n_draw)
+frame_tendina_pdf = ctk.CTkFrame(master=frame_n_draw)
+frame_commessa = ctk.CTkFrame(master=frame_draw_commessa)
+
+frame_draw_commessa.rowconfigure(0, weight= 2)
+frame_draw_commessa.columnconfigure(0, weight= 2)
+
 draw_mode_checkbox = ctk.CTkCheckBox(
-    master=frame_n_draw, 
+    master=frame_n_draw_label_auto_button, 
     bg_color=['gray86', 'gray17'], 
     text="Auto"
     )
@@ -1596,28 +1654,48 @@ print("checkbox_auto: " + str(checkbox_auto))
 # Imposta lo stato di spunta del checkbox in base al valore caricato
 if(checkbox_auto):
     draw_mode_checkbox.select()
+    pdf_file_list = get_pdf_files_in_directory(directory_path)
 elif(not checkbox_auto):
     draw_mode_checkbox.deselect()
 else:
     print("Conf not found")
 
-draw_mode_checkbox.place(relx = 0.65, rely=0.1)
-
 draw_num_label = ctk.CTkLabel(
-    master=frame_n_draw, 
+    master=frame_n_draw_label_auto_button, 
     bg_color=['gray92', 'gray14'], 
-    text="Numero disegno")
-draw_num_label.place(relx = 0.09, rely=0.11)
+    text="Numero disegno"
+    )
 
 draw_num_entry = ctk.CTkEntry(
-    master=frame_n_draw, 
+    master=frame_tendina_pdf, 
     width= 140 + 10,
     height= 28 + 10,
     bg_color=['gray92', 'gray14']
     )
 
+commessa_num_label = ctk.CTkLabel(
+    master=frame_commessa,
+    bg_color=['gray92', 'gray14'], 
+    text="Commessa"
+    )
+
+commessa_num_entry = ctk.CTkEntry(
+    master=frame_commessa, 
+    width= 140 + 10,
+    height= 28 + 10,
+    bg_color=['gray92', 'gray14']
+    )
+
+frame_n_draw.grid(                  row= 0, column= 0, padx= 5, pady=5)
+draw_num_label.grid(                row= 0, column= 0, padx= 5)#, pady=5)
+draw_mode_checkbox.grid(            row= 0, column= 1, padx= 0)#, pady=5)
+frame_n_draw_label_auto_button.grid(row= 0, column= 0, padx= 5, pady=5)
+frame_commessa.grid(                row= 2, column= 0, padx= 5, pady=5)
+commessa_num_label.grid(            row= 0, column= 0, padx= 5)#, pady=5)
+commessa_num_entry.grid(            row= 1, column= 0, padx= 5)#, pady=5)
+
 menu_tendina_disegni = ctk.CTkOptionMenu(
-    master=frame_n_draw, 
+    master=frame_tendina_pdf, 
     values=[], 
     bg_color=['gray86', 'gray17'],
     width= 140,# + 10,
@@ -1628,11 +1706,11 @@ menu_tendina_disegni = ctk.CTkOptionMenu(
     hover=False
     )
 
-menu_tendina_disegni.configure(values=file_list)
+menu_tendina_disegni.configure(values=pdf_file_list)
 menu_tendina_disegni.set("Sel. num. disegno")
 
 draw_open_pdf_button = ctk.CTkButton(
-    master=frame_n_draw, 
+    master=frame_tendina_pdf, 
     width= 10,
     height= 28 + 10,
     bg_color=['gray92', 'gray14'],
@@ -1640,12 +1718,23 @@ draw_open_pdf_button = ctk.CTkButton(
     command= lambda: open_pdf()
     )
 
+def draw_number_frame_visual_mode(operation):
+    if operation == 'auto':
+        draw_num_entry.grid_forget()
+        menu_tendina_disegni.grid(row=1, column=0, padx= 5, pady= 5)
+        draw_open_pdf_button.grid(row=1, column=1, padx= 0, pady= 5)
+        frame_tendina_pdf.grid(row=1, column=0, padx= 5, pady= 5)
+
+    elif operation == 'manual':
+        frame_tendina_pdf.grid(row=1, column=0, padx= 5, pady= 5)
+        menu_tendina_disegni.grid_forget()
+        draw_open_pdf_button.grid_forget()
+        draw_num_entry.grid(row=1, column=0, padx= 5, pady= 5)
+
 if draw_mode_checkbox.get():
-    menu_tendina_disegni.place(relx = 0.02, rely=0.4)
-    draw_open_pdf_button.place(relx = 0.775, rely=0.4)
+    draw_number_frame_visual_mode('auto')
 else:
-    #draw_open_pdf_button.place_forget()
-    draw_num_entry.place(relx = 0.09, rely=0.4)
+    draw_number_frame_visual_mode('manual')
 
 #LAVORAZIONE FRAME
 LAVORAZIONE_FRAME_WIDTH = 400
@@ -1668,14 +1757,45 @@ elettro_checkbox.place(x=_map_item_x(320, LAVORAZIONE_FRAME_WIDTH), y=_map_item_
 taglio_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Taglio")
 taglio_checkbox.place(x=_map_item_x(13, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-def show_popup():
+def show_popup_login():
     # Disable/Enable popup
-    if switch.get()==1:
-        #keyboard.disable = False
+    if switch_login.get() == 1:
         numpad_login.disable = False
+        
     else:
-        #keyboard.disable = True
         numpad_login.disable = True
+
+
+def show_popup_singup():
+    # Disable/Enable popup
+    if switch_singup.get() == 1:
+        numpad_singup_password.disable = False
+        numpad_singup_repeat_password.disable = False
+        
+    else:
+        numpad_singup_password.disable = True
+        numpad_singup_repeat_password.disable = True
+
+
+def show_popup_home():
+    # Disable/Enable popup
+    if switch_home_page.get() == 1: #RIPRENDI DA QUI
+        numpad_setup.disable = False
+        numpad_taglio.disable = False
+        numpad_fresatura.disable = False
+        numpad_tornitura.disable = False
+        numpad_elettro.disable = False
+        numpad_n_pezzi.disable = False
+        numpad_setup.disable = False
+        
+    else:
+        numpad_setup.disable = True
+        numpad_taglio.disable = True
+        numpad_fresatura.disable = True
+        numpad_tornitura.disable = True
+        numpad_elettro.disable = True
+        numpad_n_pezzi.disable = True
+        numpad_setup.disable = True
 
 def create_database(username):
     global db_config
@@ -1779,21 +1899,26 @@ def perform_registration():
                 message="Errore di accesso al database",
                 icon="warning"
                 )
+            
+progressbar = ctk.CTkProgressBar(master=home_page)
+#progressbar.pack(padx=20, pady=10)
 
 def check_db_connection(db_config):
     global DB_STATE
-    try:
-        # Prova a connetterti al database PostgreSQL
-        conn = psycopg2.connect(**db_config)
-        conn.close()  # Chiudi immediatamente la connessione, non serve tenerla aperta
-        DB_STATE = "Connesso"
-        update_db_user_state()
-        return True  # Restituisci True se la connessione è riuscita
-    except psycopg2.Error as e:
-        print(f"Errore durante la connessione al database: {e}")
-        update_db_user_state()
-        DB_STATE = 'Errore di connessione' 
-        return False  # Restituisci False se c'è stato un errore di connessione
+    start_time = time.time()
+    while time.time() - start_time < 10:
+        try:
+            # Prova a connetterti al database PostgreSQL
+            conn = psycopg2.connect(**db_config)
+            conn.close()  # Chiudi immediatamente la connessione, non serve tenerla aperta
+            DB_STATE = "Connesso"
+            update_db_user_state()
+            return True  # Restituisci True se la connessione è riuscita
+        except psycopg2.Error as e:
+            print(f"Errore durante la connessione al database: {e}")
+            update_db_user_state()
+            DB_STATE = 'Errore di connessione'
+            return False  # Restituisci False se c'è stato un errore di connessione
 
 
 # Chiamata alla funzione per verificare la connessione al database all'avvio
@@ -1929,12 +2054,12 @@ def show_draw_config_dialog():
             directory_entry.insert(0, directory_path)  # Inserisce il percorso selezionato nell'entry widget
 
     def save_directory():
-        global file_list
+        global pdf_file_list
         chosen_directory = directory_entry.get()
         if chosen_directory:
             save_config("draw_directory", chosen_directory)
-            file_list = get_pdf_files_in_directory(chosen_directory)
-            menu_tendina_disegni.configure(values=file_list)
+            pdf_file_list = get_pdf_files_in_directory(chosen_directory)
+            menu_tendina_disegni.configure(values=pdf_file_list)
             dialog.destroy()  # Chiude la finestra di dialogo dopo aver salvato il percorso
 
     def toggle_auto_scan(checkbox):
@@ -2122,8 +2247,6 @@ def change_color_event(new_color: str):
     save_config("color", new_color)
     ctk.set_default_color_theme(new_color)
 
-
-
 #FRAME SETTINGS
 SETTINGS_FRAME_WIDTH = 190 + 10
 SETTINGS_FRAME_HEIGHT = 263 + 60
@@ -2172,6 +2295,32 @@ num_board_select_num.grid(row=8, column=0)
 # Colleghi la funzione di aggiornamento alla variazione del valore del CTkSpinbox
 num_board_select_num.configure(command=lambda: update_num_board(num_board_select_num.get()))
 
+# Creazione del frame per la gui Scale
+frame_gui_scale = ctk.CTkFrame(master=frame_settings) 
+
+# Label per la GUISCALE Scale
+gui_scale_scale_label_singup = ctk.CTkLabel(
+    master=frame_gui_scale, 
+    bg_color=['gray92', 'gray14'], 
+    text="GUI scale size"
+)
+
+# CTkSpinbox per la selezione della GUI Scale
+gui_scale_select_num = CTkSpinbox(
+    master=frame_gui_scale, 
+    bg_color=['gray86', 'gray17'],
+    width=_map_item_x(76, SETTINGS_FRAME_WIDTH),
+    height=_map_item_y(44, SETTINGS_FRAME_HEIGHT),
+    value=GUI_SCALE, 
+    fg_color=['gray81', 'gray20']
+)
+
+frame_gui_scale.grid(               row=6, column=0, padx=10, pady=10)
+gui_scale_scale_label_singup.grid(  row=0, column=0)
+gui_scale_select_num.grid(          row=1, column=0)
+
+gui_scale_select_num.configure(command=lambda: update_gui_scale(gui_scale_select_num.get()))
+
 # Creazione del frame per l'aspetto
 frame_appearance = ctk.CTkFrame(master=frame_settings)
 frame_appearance.grid(row=7, column=0, padx=10, pady=10)
@@ -2192,7 +2341,7 @@ appearance_mode_optionemenu.grid(row=1, column=0)
 
 # Label per il colore
 color_label = ctk.CTkLabel(frame_appearance, text="Colore:", anchor="w")
-color_label.grid(row=6, column=0)
+color_label.grid(row=8, column=0)
 
 # OptionMenu per selezionare il colore
 color_optionemenu = ctk.CTkOptionMenu(
@@ -2202,7 +2351,7 @@ color_optionemenu = ctk.CTkOptionMenu(
 )
 default_color_text = "Seleziona un colore"
 color_optionemenu.set(default_color_text)
-color_optionemenu.grid(row=5, column=0)
+color_optionemenu.grid(row=9, column=0)
 
 # Pulsante per le impostazioni del database
 db_settings = ctk.CTkButton(
@@ -2267,7 +2416,6 @@ note_num_label = ctk.CTkLabel(
     master=frame_note, 
     bg_color=['gray92', 'gray14'], 
     text="Aggiungi note")
-note_num_label.place(relx = 0.09, rely=0.11)
 
 note_num_entry = ctk.CTkEntry(
     master=frame_note, 
@@ -2276,37 +2424,64 @@ note_num_entry = ctk.CTkEntry(
     bg_color=['gray92', 'gray14']
     )
 
-note_num_entry.place(relx = 0.09, rely=0.4)
+note_num_label.grid(row= 0, column= 0, padx= 10, pady= 10)#place(relx = 0.09, rely=0.11)
+note_num_entry.grid(row= 1, columnspan= 2, padx= 10, pady= 10)#place(relx = 0.09, rely=0.4)
 
-def get_user_databases():
+#FRAME COMMESSA
+N_NOTE_FRAME_WIDTH = 210
+N_NOTE_FRAME_HEIGHT = 100
+
+frame_commessa = ctk.CTkFrame(
+    master=home_page,
+    width=_map_frame_x(N_NOTE_FRAME_WIDTH), 
+    height=_map_frame_y(N_NOTE_FRAME_HEIGHT)
+    )
+
+commessa_mode_checkbox = ctk.CTkCheckBox(
+    master=frame_commessa, 
+    bg_color=['gray86', 'gray17'], 
+    text="Auto"
+    )
+
+def get_user_databases(db_config):
     try:
-        # Connessione al database principale
-        conn_main = psycopg2.connect(**db_config)
-        cur_main = conn_main.cursor()
+        start_time = time.time()  # Memorizza il tempo di inizio del tentativo di connessione
 
-        # Ottieni i nomi dei database presenti sul server PostgreSQL
-        cur_main.execute("SELECT datname FROM pg_catalog.pg_database")
-        databases = cur_main.fetchall()
+        while time.time() - start_time < 10:  # Continua fino a quando non sono passati 10 secondi
+            # Connessione al database principale
+            conn_main = psycopg2.connect(**db_config)
+            cur_main = conn_main.cursor()
 
-        # Filtra solo i nomi dei database che terminano con "_user"
-        user_databases = [db[0].rstrip("_user") for db in databases if db[0].endswith("_user")]
-        print(user_databases)
+            # Ottieni i nomi dei database presenti sul server PostgreSQL
+            cur_main.execute("SELECT datname FROM pg_catalog.pg_database")
+            databases = cur_main.fetchall()
 
-        # Chiudiamo la connessione al database principale
-        conn_main.close()
+            # Filtra solo i nomi dei database che terminano con "_user"
+            user_databases = [db[0].rstrip("_user") for db in databases if db[0].endswith("_user")]
 
-        return user_databases
+            # Chiudiamo la connessione al database principale
+            conn_main.close()
+
+            return user_databases
 
     except Exception as e:
+        CTkMessagebox(
+                master= login_page,
+                title="Errore", 
+                message="Errore recupero lista utenti",
+                icon="warning"
+                )
         print(f"Errore durante il recupero dei database degli utenti: {e}")
         return ["Errore1", "Errore2", "Errore3"]
 
-def perform_login():#username, password):
+
+def perform_login():
     global LOGGED_USER
     global LOGGED_USER_DB
     global LOAD_TEMP
+    global users_list
 
-    users_list = get_user_databases()
+    #users_list = get_user_databases()
 
     username = menu_tendina_utenti.get()  # Ottieni il valore immesso nella casella di testo dell'username
     password = passwd_login_entry.get()  # Ottieni il valore immesso nella casella di testo della password
@@ -2402,7 +2577,7 @@ def accedi():
     perform_login()
 
 def order_to_db(TABLE_NAME):
-    global LOGGED_USER 
+    global LOGGED_USER
     global LOGGED_USER_DB
     global selected_checkbox_text
     global selected_start_datetime
@@ -2412,20 +2587,20 @@ def order_to_db(TABLE_NAME):
     else:
         numero_disegno = str(draw_num_entry.get())
     
-    draw_exists = check_draw_exist_connection(db_config, numero_disegno)
 
     tipo_lavorazione = ''
     orario_fine = time.strftime('%Y-%m-%d %H:%M:%S')
-    #orario_fine_dt = datetime.strptime(orario_fine, '%Y-%m-%d %H:%M:%S')
     tempo_setup = int(tempo_setup_num.get())
     tempo_taglio = int(tempo_taglio_num.get())
     tempo_tornitura = int(tempo_tornitura_num.get())
     tempo_fresatura = int(tempo_fresatura_num.get())
     tempo_elettroerosione = int(tempo_elettro_num.get())
-    tempo_ciclo_totale = tempo_taglio + tempo_tornitura + tempo_fresatura + tempo_elettroerosione
     numero_pezzi = int(pezzi_select_num.get())
     orario_inizio = selected_start_datetime
     note_lavorazione = note_num_entry.get()
+    commessa_lavorazione = commessa_num_entry.get()
+    print(f'\ncommessa_lavorazione: {commessa_num_entry.get()}')
+
     if draw_mode_checkbox.get():
         numero_disegno = str(menu_tendina_disegni.get())
     else:
@@ -2436,7 +2611,7 @@ def order_to_db(TABLE_NAME):
     errore_riempimento = False
 
     if checkbox_data != "":
-        tipo_lavorazione = checkbox_data#["text"]
+        tipo_lavorazione = checkbox_data
         print("Checkbox selezionato:", tipo_lavorazione)
     else:
         print("Nessun checkbox selezionato.")
@@ -2445,7 +2620,7 @@ def order_to_db(TABLE_NAME):
     print("selected_start_datetime: " + str(selected_start_datetime))
 
     # Verifica se tutti i campi sono stati compilati e se il numero di pezzi è diverso da zero
-    if not all([orario_inizio, orario_fine, tipo_lavorazione, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '' or selected_start_datetime == None:
+    if not all([orario_inizio, orario_fine, tipo_lavorazione, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '' or commessa_lavorazione == '' or selected_start_datetime == None:
         errore_riempimento = True
     
     if 'Taglio' in selected_checkbox_text and tempo_taglio == 0:
@@ -2467,12 +2642,11 @@ def order_to_db(TABLE_NAME):
                   )
         return
 
-    tempo_ciclo_totale = tempo_taglio + tempo_tornitura + tempo_fresatura + tempo_elettroerosione + tempo_setup
-
     #orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, tempo_ciclo, numero_pezzi
     user_choose = ask_question_confirm_order(orario_fine, tempo_setup, tempo_taglio, tempo_tornitura, 
                                tempo_fresatura, tempo_elettroerosione, orario_inizio, 
-                               numero_pezzi, numero_disegno, note_lavorazione)
+                               numero_pezzi, numero_disegno, commessa_lavorazione, note_lavorazione)
+    
     if(not user_choose):
         CTkMessagebox(title="Errore", 
                   message="Devi accedere per confermare l'ordine!",
@@ -2497,17 +2671,18 @@ def order_to_db(TABLE_NAME):
                     orario_inizio TIMESTAMP,
                     orario_fine TIMESTAMP,
                     numero_disegno TEXT,
+                    commessa_lavorazione TEXT,
                     tempo_taglio INTEGER,
                     tempo_tornitura INTEGER,
                     tempo_fresatura INTEGER,
                     tempo_elettroerosione INTEGER,
-                    tempo_ciclo_totale INTEGER,
+                    
                     tempo_setup INTEGER,
                     numero_pezzi INTEGER,
                     note_lavorazione TEXT
                 )
             """.format(TABLE_NAME)
-
+#tempo_ciclo_totale INTEGER,
             cur.execute(query)
             
             query = """
@@ -2515,6 +2690,7 @@ def order_to_db(TABLE_NAME):
                     orario_inizio, 
                     orario_fine, 
                     numero_disegno, 
+                    commessa_lavorazione,
                     tempo_taglio, 
                     tempo_tornitura, 
                     tempo_fresatura, 
@@ -2522,16 +2698,15 @@ def order_to_db(TABLE_NAME):
                     tempo_setup, 
                     numero_pezzi, 
                     note_lavorazione)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """.format(TABLE_NAME)
 
-            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione))
+            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione))
             conn.commit()
             CTkMessagebox(title="Chiusura ordine", 
                   message="Ordine chiuso con successo!",
                   icon="info"
                   )
-                  
         else:
             CTkMessagebox(title="Errore", 
                   message=f"Devi effettuare il login per poter concludere l'ordine!",
@@ -2564,6 +2739,7 @@ def azzera_ordine():
     tempo_elettro_num.configure(value= 0)
     menu_tendina_disegni.set("Sel. num. disegno")
     draw_num_entry.delete('0', 'end')
+    commessa_num_entry.delete('0', 'end')
     start_time_time_elapsed_label.configure(text= 'Da impostare')
     note_num_entry.delete('0', 'end')
     selected_start_datetime = None
@@ -2593,89 +2769,93 @@ def get_last_orders(num_ordini):
         cur.execute(query, (num_ordini,))
         ultimi_ordini = cur.fetchall()
 
+        # Ottenere i nomi delle colonne
+        column_names = [desc[0] for desc in cur.description]
+
+        # Costruire una lista di dizionari usando i nomi delle colonne come chiavi
+        result = []
+        for row in ultimi_ordini:
+            order_dict = {column_names[i]: row[i] for i in range(len(row))}
+            result.append(order_dict)
+
         # Chiudi la connessione al database
         cur.close()
         conn.close()
 
-        return ultimi_ordini
+        print("Ultimi ordini:", result[0])
+
+        return result
 
     except psycopg2.Error as e:
         print("Errore durante l'interrogazione del database:", e)
         return None
 
+
 def modifica_ordine():
-    global recent_orders, selected_order, TABLE_ORDERS_ROW
+    global recent_orders_from_db, selected_order_from_table, TABLE_ORDERS_ROW, LOGGED_USER, LOGGED_USER_DB
     ORDER_MOD_BUTTON_WIDTH = 100
 
-    def forget_selected_order_frame():
-            global selected_order, selected_column, selected_row
-            selected_order = None
-            #selected_row = None
-            #selected_column = None
-            
-            table_selected_order.destroy()
-            button_elimina_ordine_selezionato.grid_forget()
-            button_modifica_ordine_selezionato.grid_forget()
-            frame_gestione_selezione_ordine_effettuato.grid_forget()
-            frame_buttons_selezione_ordine_effettuato.grid_forget()
+    if(LOGGED_USER == '' and LOGGED_USER_DB == ''):
+        CTkMessagebox(title="Errore", 
+                  message=f"Devi effettuare il login per poter concludere l'ordine!",
+                  icon="info"
+                  )
+        return
+    
+    switch_page(modify_order_page)
 
     def back_to_home():
 
         frame_gestione_modifica_ordine_selezionato.place_forget()
 
+        frame_modify_order.grid_forget()
         button_modifica_ordine_selezionato.grid_forget()
         button_elimina_ordine_selezionato.grid_forget()
         frame_gestione_selezione_ordine_effettuato.place_forget()
 
-        button_conferma_modifica.grid_forget()
+        #button_conferma_modifica.grid_forget()
         button_indietro_modifica.grid_forget()
         frame_gestione_lista_ordini_effettuati.place_forget()
         table_orders_list.destroy()
         switch_page(home_page)
 
-    def print_selected(selected):
-        print("selected: " + str(selected))
-
     def gestione_selezione():
         
         def draw_selected_order():
-            global selected_order
-            '''
-            label_seleted_table = ctk.CTkLabel(
-                master=frame_gestione_selezione_ordine_effettuato, 
-                bg_color=['gray86', 'gray17'], 
-                text="Seleziona l'elemento da modificare"
-            )
-            label_seleted_table.grid(row=0, padx=5, pady=10)
-            '''
-            intestazioni = ["ID", "Orario inizio", "Orario fine", "Numero disegno", "Tempo taglio", "Tempo tornitura", 
-                            "Tempo fresatura", "Tempo elettroerosione", "Tempo ciclo", "Tempo setup", "Numero pezzi", "Note lavorazione"]
+            global selected_order_from_table, intestazioni
             
             for col, intestazione in enumerate(intestazioni):
+                print(f'col: {col}, intestazione: {intestazione}')
                 table_selected_order.insert(0, col, intestazione, bg_color="lightgrey")
 
             # Popolamento della tabella con l'ordine selezionato
-            ordine = selected_order
+            ordine = selected_order_from_table
             for col, valore in enumerate(ordine, start=0):
                 if isinstance(valore, datetime):
                     valore = valore.strftime("%Y-%m-%d %H:%M:%S")
+
+                if col == 3 or col == 10 or col == 11:
+                    if valore == None:
+                        valore = ''
                 table_selected_order.insert(1, col, valore)
 
             table_selected_order.grid(row=1, padx=5, pady=10)
 
         draw_selected_order()
         if frame_gestione_selezione_ordine_effettuato.winfo_exists():
-            
+            frame_modify_order.grid_forget()
             button_modifica_ordine_selezionato.grid_forget()
             frame_gestione_selezione_ordine_effettuato.grid_forget()
 
+        frame_modify_order.grid(row=1, column= 0, columnspan= 3, padx=10, pady=10)
         button_elimina_ordine_selezionato.grid( row=0, column=1, padx=10, pady=10)
         frame_buttons_selezione_ordine_effettuato.grid(row=2, padx=10, pady=10)
+        frame_buttons_selezione_ordine_effettuato.lift()
 
-        frame_gestione_selezione_ordine_effettuato.place(relx=0.5, rely=0.8, anchor='s')
+        frame_gestione_selezione_ordine_effettuato.grid(row=1,padx=10, pady=10)#place(relx=0.5, rely=0.8, anchor='s')
 
     def show_row_select(cell):
-        global selected_row, prev_selected_row, selected_column, prev_selected_column, selected_order
+        global selected_row, prev_selected_row, selected_column, prev_selected_column, selected_order_from_table
 
         if cell["row"] == 0:
             return  # Non modificare l'intestazione
@@ -2691,14 +2871,11 @@ def modifica_ordine():
 
         # Seleziona la nuova riga
         selected = table_orders_list.get()[cell["row"]]
-        selected_order = selected
+        selected_order_from_table = selected
         selected_row = cell["row"]
         table_orders_list.edit_row(selected_row, fg_color=table_orders_list.hover_color)
 
         gestione_selezione()
-
-        # Esegui altre azioni, se necessario, sulla riga selezionata
-        print_selected(selected)
 
     def show_column_select(cell):
         global selected_column, column_name, column_value
@@ -2718,12 +2895,9 @@ def modifica_ordine():
 
         button_modifica_ordine_selezionato.grid(row=0, column=0, padx=10, pady=10)
 
-        # Esegui altre azioni, se necessario, sulla colonna selezionata
-        print(f'colonna: {column_name}, valore: {column_value}')
-
-    def update_db_value(id):
-        global selected_column, column_value, db_index_names
-        db_column_name = db_index_names[selected_column]
+    def update_db_value(id, value):
+        global selected_column, column_value, db_index_to_names
+        db_column_name = db_index_to_names[selected_column]
         try:
             db_name = LOGGED_USER_DB
 
@@ -2738,7 +2912,7 @@ def modifica_ordine():
             """
 
             # Eseguire la query di aggiornamento con il nuovo valore e l'ID del record da aggiornare
-            cur.execute(query, (column_value, id))
+            cur.execute(query, (value, id))
             conn.commit()
 
             CTkMessagebox(
@@ -2746,9 +2920,6 @@ def modifica_ordine():
                 message="Ordine aggiornato con successo!",
                 icon="info"
             )
-            
-            #forget_selected_order_frame()
-
 
         except psycopg2.Error as e:
             print(e)
@@ -2761,10 +2932,13 @@ def modifica_ordine():
 
     def int_modify_dialog(column_name):
         global DATA_ORDER_CHANGE, column_value
-        
+        if column_value == None:
+            column_value = 0
+
         def save_int():
-            global column_value, DATA_ORDER_CHANGE
-            column_value = int_spinbox.get()
+            global column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
+            value_for_db = int_spinbox.get()
+            value_for_table = value_for_db
             print(f"Modifica '{column_name}': {column_value}")
             DATA_ORDER_CHANGE = True
             dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
@@ -2783,54 +2957,75 @@ def modifica_ordine():
         DATA_ORDER_CHANGE = False
         
         dialog.lift()
-        dialog.focus_set()  
-        dialog.grab_set()   
+        dialog.focus_set()
+        dialog.grab_set()
         dialog.wait_window()
 
     def string_modify_dialog(column_name):
-        global DATA_ORDER_CHANGE, column_value
+        global DATA_ORDER_CHANGE, column_value, value_for_db, value_for_table
+        index_to_modify = find_index_from_id(selected_order_from_table[0])
+        value_for_db = recent_orders_from_db[index_to_modify][db_index_to_names[selected_column]]
+        if value_for_db == None:
+            value_for_db = ''
+        if value_for_table == None:
+            value_for_table = ''
+        print(f"value_for_db_1 prima della mod: {value_for_db}")
+        print(f'valore "value_for_table" in string modify dialog: {value_for_table}')
+        print(f'column_value: {column_value}')
+        
+        def clean_string(string_to_clean):
+            print(f"string_to_clean 1: {string_to_clean}")
+            while string_to_clean[-1] == '\n':
+                string_to_clean = string_to_clean[:-1]
+            print(f"string_to_clean 2: {string_to_clean}")
+            return string_to_clean
+        
         def save_string():
-            global column_value, DATA_ORDER_CHANGE
-            column_value = entry_string.get()
-            print(f"Modifica '{column_name}': {column_value}")
+            global column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
+            value_for_db = clean_string(entry_string.get("0.0", "end"))
+            value_for_table = value_for_db[:10]
+
+            print(f'valore "value_for_db" in save string: {value_for_db}')
+            print(f'valore "value_for_table" in save string: {value_for_table}')
             DATA_ORDER_CHANGE = True
-            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+            dialog.destroy()
 
         dialog = ctk.CTkToplevel()
         dialog.title(f"Modifica {column_name}")
 
         ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
-        entry_string = ctk.CTkEntry(master=dialog, width=50, height=50)
-        entry_string.grid(row=0, column=1, padx=5, pady=5)
-        if(column_value == None):
-            column_value = ''
-            entry_string.insert(0, column_value)
-        else:
-            entry_string.insert(0, column_value)
+        entry_string = ctk.CTkTextbox(master=dialog, width=250, height=150)
+        entry_string.grid(row=1, column=0, padx=5, pady=5)
 
         save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_string)
-        save_button.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        save_button.grid(row=2, column=0, padx=5, pady=5)
+
+        if(column_value == None):
+            column_value = ''
+            entry_string.insert("0.0", value_for_db)
+        else:
+            entry_string.insert("0.0", value_for_db)
 
         DATA_ORDER_CHANGE = False
         
         dialog.lift()
-        dialog.focus_set()  
-        dialog.grab_set()   
+        dialog.focus_set()
+        dialog.grab_set()
         dialog.wait_window()
 
     def datetime_modify_dialog(datetime_to_mod):
         global DATA_ORDER_CHANGE
 
         def save_datetime():
-            global new_date, column_value, DATA_ORDER_CHANGE
+            global new_date, column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
             selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
             selected_hour = int(hour_spinbox.get())
             selected_minute = int(minute_spinbox.get())
-            column_value = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
+            value_for_db = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
+            value_for_table = value_for_db.strftime("%Y-%m-%d %H:%M:%S")
             print("Data e ora inserite:", column_value)
-            #start_time_time_elapsed_label.configure(text= selected_start_datetime)
             DATA_ORDER_CHANGE = True
-            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
+            dialog.destroy()
 
         current_date = datetime.now()
         current_hour = datetime_to_mod.hour
@@ -2869,46 +3064,69 @@ def modifica_ordine():
         dialog.grab_set()   
         dialog.wait_window()
 
-    def modifica_valore_colonna():
-        global selected_column, column_name, column_value, new_date, selected_order
-        print(f"modifica:\n{selected_column}\n{column_name}\n{column_value}")
-
-        if isinstance(column_value, str):
-            # Verifica se la stringa può essere convertita in un oggetto datetime
-            try:
-                column_value_datetime = datetime.strptime(column_value, "%Y-%m-%d %H:%M:%S")
-                datetime_modify_dialog(column_value_datetime)
-            except ValueError:
-                string_modify_dialog(column_name)
-        elif isinstance(column_value, int):
-            int_modify_dialog(column_name)
-        elif(isinstance, None):
-            string_modify_dialog(column_name)
-        else:
-            print("Tipo di dato non supportato.")
+    def find_index_from_id(selected_id):
+        index_recent_orders = -1
+        for i, order in enumerate(recent_orders_from_db):
+            print(f'order[0]: {order}, selected_id: {selected_id}')
+            if order['id'] == selected_id:
+                index_recent_orders = i
+                break
+        return index_recent_orders
+    
+    def update_tables_values(index_recent_orders):
+        global value_for_table
+        print(f'update_tables_values\nvalue_for_db: {value_for_db}, value_for_table: {value_for_table}')
+        recent_orders_from_db[index_recent_orders][selected_column] = value_for_db #ins valore nel dict del db
+        print(f'recent_orders_from_db: {recent_orders_from_db[index_recent_orders][selected_column]}')
+        table_selected_order.insert(1, selected_column, value_for_table)# ins valore nella tabella selezionata
+        selected_order_from_table[selected_column] = value_for_table# ins valore nella tabella ordini recenti
+        print(f'selected_order_from_table: {selected_order_from_table[selected_column]}')
+        table_orders_list.insert(selected_row, selected_column, value_for_table)
         
-        selected_order[selected_column] = column_value
-        print(selected_order[selected_column])
-        table_selected_order.insert(1, selected_column, column_value)
-        table_orders_list.insert(selected_row, selected_column, column_value)
-        print(selected_order)
+    def modifica_valore_colonna():
+        global selected_column, column_name, column_value, new_date, selected_order_from_table, value_for_db, value_for_table
+        selected_id = selected_order_from_table[0] #RIPRENDI DA QUA
+        print(f'selected_id: {selected_id}, selected_order_from_db: {selected_order_from_table}')
+        print(f'selected_id: {selected_id}, selected_order_from_table: {selected_order_from_table}')
+        index_recent_orders = find_index_from_id(selected_id)
+        print(f'selected_column: {selected_column}')
+
+        value_for_db = None
+        value_for_table = None
+
+        if selected_column == 1 or selected_column == 2:
+            if column_value == None or column_value == 'error':
+                print('error value found')
+                column_value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            date_value_datetime = datetime.strptime(column_value, "%Y-%m-%d %H:%M:%S")
+            
+            datetime_modify_dialog(date_value_datetime)
+            if(DATA_ORDER_CHANGE):
+                update_tables_values(index_recent_orders)
+
+        elif selected_column == 3 or selected_column == 10 or selected_column == 11:
+            string_modify_dialog(column_name)
+            if(DATA_ORDER_CHANGE):
+                update_tables_values(index_recent_orders)
+
+        elif selected_column == 4 or selected_column == 5 or selected_column == 6 or selected_column == 7 or selected_column == 8 or selected_column == 9:
+            int_modify_dialog(column_name)
+            if(DATA_ORDER_CHANGE):
+                update_tables_values(index_recent_orders)
+
         if DATA_ORDER_CHANGE:
             print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
-            update_db_value(selected_order[0])
+            update_db_value(selected_order_from_table[0], value_for_db)
+            value_for_db = None
+            value_for_table = None
+
         else:
             print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
-        #table_selected_order.edit()
-
-
-
-
-    def conferma_modifica():
-        print("conferma")
 
     def elimina_ordine():
-        global selected_order, selected_row
+        global selected_order_from_table, selected_row
 
-        CHOICE = ask_question_choice(f"Sei sicuro di voler eliminare l'ordine con ID:{selected_order[0]}")
+        CHOICE = ask_question_choice(f"Sei sicuro di voler eliminare l'ordine con ID:{selected_order_from_table[0]}")
 
         if CHOICE:
             try:
@@ -2922,7 +3140,7 @@ def modifica_ordine():
                     WHERE id = %s
                 """.format('ordini')
 
-                cur.execute(query, (selected_order[0],))
+                cur.execute(query, (selected_order_from_table[0],))
                 conn.commit()
 
                 CTkMessagebox(title="Eliminazione ordine", 
@@ -2944,75 +3162,39 @@ def modifica_ordine():
                     cur.close()
                     conn.close()
 
+    frame_order = ctk.CTkFrame(master=modify_order_page)
+    frame_order.place(relx=0.5, anchor='n')
 
-    #recent_orders = get_last_orders(TABLE_ORDERS_ROW)
-    
-    switch_page(modify_order_page)
+    frame_order_list = ctk.CTkScrollableFrame(master=frame_order, width= 900)#root_width - 100)#, height= root_height / 2)#, height=ORDER_MAN_FRAME_HEIGHT)
+    frame_order_list.grid(row=0, column=0, columnspan= 3, padx=5, pady=5)
 
-    table_orders_list = CTkTable(master=modify_order_page, width= 70, height= 38, row=TABLE_ORDERS_ROW + 1, command=show_row_select, column=12)
-    table_selected_order = CTkTable(master=frame_gestione_selezione_ordine_effettuato, width= 70, height= 38,  command=show_column_select, row=2, column=12)
+    frame_modify_order = ctk.CTkFrame(master=frame_order, width=ORDER_MAN_FRAME_WIDTH)
 
-    def draw_table_orders():
-        global recent_orders
-
-        recent_orders = get_last_orders(TABLE_ORDERS_ROW)
-
-        intestazioni = ["ID", "Orario inizio", "Orario fine", "Numero disegno", "Tempo taglio", "Tempo tornitura", 
-                        "Tempo fresatura", "Tempo elettroerosione", "Tempo ciclo", "Tempo setup", "Numero pezzi", "Note lavorazione"]
-        
-        for col, intestazione in enumerate(intestazioni):
-            table_orders_list.insert(0, col, intestazione, bg_color="lightgrey")
-
-        # Popolamento della tabella con gli ordini
-        for row, ordine in enumerate(recent_orders, start=1):
-            for col, valore in enumerate(ordine, start=0):
-                if isinstance(valore, datetime):
-                    valore = valore.strftime("%Y-%m-%d %H:%M:%S")
-                #print(f"col: {col}, valore: {valore}")
-                table_orders_list.insert(row, col, valore)
-
-        table_orders_list.pack(expand=True, padx=20, pady=20, anchor='n')
-    
-    draw_table_orders()
-
-    frame_gestione_modifica_ordine_selezionato = ctk.CTkFrame(
-        master=modify_order_page,
+    frame_gestione_selezione_ordine_effettuato = ctk.CTkFrame(
+        master=frame_modify_order,
         width=ORDER_MAN_FRAME_WIDTH,
         height=ORDER_MAN_FRAME_HEIGHT
     )
 
+    table_orders_list = CTkTable(master=frame_order_list, width= 50, height= 38, row=TABLE_ORDERS_ROW + 1, command=show_row_select, column=12)
+    table_selected_order = CTkTable(master=frame_gestione_selezione_ordine_effettuato, width= 50, height= 38,  command=show_column_select, row=2, column=12)
     # Creazione del frame
     frame_gestione_lista_ordini_effettuati = ctk.CTkFrame(
-        master=modify_order_page,
+        master=frame_order, #modify_order_page,
         width=ORDER_MAN_FRAME_WIDTH,
         height=ORDER_MAN_FRAME_HEIGHT
     )
     
-    button_conferma_modifica = ctk.CTkButton(
-        master=frame_gestione_lista_ordini_effettuati, 
-        bg_color=['gray92', 'gray14'], 
-        text="Conferma ordine",
-        width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT)#,
-        #command=lambda: conferma_ordine()
-    )
-
     button_indietro_modifica = ctk.CTkButton(
         master=frame_gestione_lista_ordini_effettuati, 
-        bg_color=['gray92', 'gray14'], 
+        bg_color=['gray92', 'gray14'],
         text="Indietro",
         width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
         height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
         command=lambda: back_to_home()
     )
 
-    button_conferma_modifica.configure(state= 'Disabled')
-
     # Posizionamento del frame
-    frame_gestione_lista_ordini_effettuati.place(relx=0.5, rely=0.9, anchor='s')
-    #button_conferma_modifica.grid(row=0, column=0, padx=10, pady=10)
-    button_indietro_modifica.grid(row=0, column=3, padx=10, pady=10)
-
     frame_buttons_selezione_ordine_effettuato = ctk.CTkFrame(
         master=frame_gestione_selezione_ordine_effettuato,
         width=ORDER_BUTTONS_FRAME_WIDTH,
@@ -3021,7 +3203,7 @@ def modifica_ordine():
 
     button_modifica_ordine_selezionato = ctk.CTkButton(
         master=frame_buttons_selezione_ordine_effettuato, 
-        bg_color=['gray92', 'gray14'], 
+        bg_color=['gray92', 'gray14'],
         text="Modifica ordine",
         width=_map_item_x(140 + 10, ORDER_BUTTONS_FRAME_WIDTH),
         height=_map_item_y(28 + 10, ORDER_BUTTONS_FRAME_HEIGHT),
@@ -3037,6 +3219,56 @@ def modifica_ordine():
         command=lambda: elimina_ordine()
     )
 
+    frame_gestione_lista_ordini_effettuati.grid(row=2, column= 1, padx=10, pady=10)
+    button_indietro_modifica.grid(row=0, column=3, padx=10, pady=10)
+
+    def draw_table_orders():
+        global recent_orders_from_db, intestazioni, TABLE_ORDERS_ROW
+
+        frame_order_list.grid(row=0, padx=10, pady=10)
+
+        recent_orders_from_db = None
+        while recent_orders_from_db is None:
+            recent_orders_from_db = get_last_orders(TABLE_ORDERS_ROW)
+        TABLE_ORDERS_ROW = len(recent_orders_from_db)
+        print('recent_orders_from_db len:', len(recent_orders_from_db))
+
+        # Popolamento dell'intestazione della tabella
+        for col, intestazione in enumerate(intestazioni):
+            table_orders_list.insert(0, col, intestazione, bg_color="lightgrey")
+
+        # Popolamento della tabella con gli ordini
+
+        for row, ordine in enumerate(recent_orders_from_db, start=1):
+            for col, valore in ordine.items():  # Usiamo items() per iterare su chiave e valore del dizionario
+                col_index = db_names_to_index.get(col)
+                print(f'col_index: {col_index}, valore: {valore}')
+                try:
+                    if col_index == 1 or col_index == 2:
+                        val_for_table = valore.strftime("%Y-%m-%d %H:%M:%S")
+                    elif col_index == 3 or col_index == 10 or col_index == 11:
+                        if valore == None:
+                            valore = ''
+                        val_for_table = valore[:10]
+                    elif col_index == 0   or col_index == 4   or col_index == 5 or col_index == 6 or col_index == 7 or col_index == 8 or col_index == 9:
+                        val_for_table = valore
+                except:
+                    val_for_table = 'error'
+                table_orders_list.insert(row, col_index, val_for_table)
+                val_for_table = None
+        print(recent_orders_from_db)
+        table_orders_list.pack(expand=True, padx=20, pady=20, anchor='n')
+
+    draw_table_orders()
+
+    frame_gestione_modifica_ordine_selezionato = ctk.CTkFrame(
+        master=modify_order_page,
+        width=ORDER_MAN_FRAME_WIDTH,
+        height=ORDER_MAN_FRAME_HEIGHT
+    )
+
+
+
 
 def salva_ordine():
     order_to_db('ordini_in_sospeso')
@@ -3044,12 +3276,15 @@ def salva_ordine():
 def conferma_ordine():
     order_to_db('ordini')
     
-def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, orario_inizio, numero_pezzi, numero_disegno, note_lavorazione):
+def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio, 
+                               tempo_tornitura, tempo_fresatura, tempo_elettroerosione, 
+                               orario_inizio, numero_pezzi, numero_disegno, commessa_lavorazione, note_lavorazione):
     # Formattazione dei dati come una tabella
     tabella = (
         f"{'INIZIO:':<20}{orario_inizio}\n"
         f"{'FINE:':<20}{orario_fine_dt}\n"
         f"{'N DISEGNO:':<20}{numero_disegno}\n"
+        f"{'N COMMESSA:':<20}{commessa_lavorazione}\n"
         f"{'SETUP:':<20}{tempo_setup} m\n"
         f"{'TAGLIO:':<20}{tempo_taglio} m\n"
         f"{'TORNITURA:':<20}{tempo_tornitura} m\n"
@@ -3079,23 +3314,32 @@ def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio, tempo_
         return False
 
 #LOGIN FRAME
-LOGIN_FRAME_WIDTH = 190 + 10
-LOGIN_FRAME_HEIGHT = 263 + 10
+LOGIN_FRAME_WIDTH = 190 + 20
+LOGIN_FRAME_HEIGHT = 263 + 20
 
 frame_login = ctk.CTkFrame(
-    master=login_page, 
-    width=_map_frame_x(LOGIN_FRAME_WIDTH),
-    height=_map_frame_y(LOGIN_FRAME_HEIGHT)
+    master=login_page#,
+    #width=_map_frame_x(LOGIN_FRAME_WIDTH),
+    #height=_map_frame_y(LOGIN_FRAME_HEIGHT)
     )
 
-switch = ctk.CTkSwitch(login_page, text="On-Screen Keyboard", command=show_popup)
-
 user_menu_label = ctk.CTkLabel(
-    master=frame_login, 
+    master=frame_login,
     bg_color=['gray92', 'gray14'], 
     text="Seleziona utente"
     )
-user_menu_label.place(x=_map_item_x(50, LOGIN_FRAME_WIDTH), y=_map_item_y(3, LOGIN_FRAME_HEIGHT))
+
+
+menu_tendina_utenti = ctk.CTkOptionMenu(
+    master=frame_login,
+    values=[],
+    bg_color=['gray86', 'gray17'],
+    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
+    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
+    dropdown_font = ctk.CTkFont(
+        'Roboto',
+        size=16),
+    hover=False)
 
 passwd_login_entry = ctk.CTkEntry(
     master=frame_login, 
@@ -3104,13 +3348,11 @@ passwd_login_entry = ctk.CTkEntry(
     bg_color=['gray92', 'gray14']
     )
 passwd_login_entry.configure(show='*')
-passwd_login_entry.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(110, LOGIN_FRAME_HEIGHT))
 
 passwd_label = ctk.CTkLabel(
-    master=frame_login, 
-    bg_color=['gray92', 'gray14'], 
+    master=frame_login,
+    bg_color=['gray92', 'gray14'],
     text="Password")
-passwd_label.place(x=_map_item_x(65, LOGIN_FRAME_WIDTH), y=_map_item_y(75, LOGIN_FRAME_HEIGHT))
 
 login_button = ctk.CTkButton(
     master=frame_login, 
@@ -3118,7 +3360,7 @@ login_button = ctk.CTkButton(
     width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
     height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
     text="Accedi")
-login_button.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(168, LOGIN_FRAME_HEIGHT))
+
 
 # Collega la funzione al pulsante "Accedi"
 login_button.configure(command=accedi)
@@ -3130,7 +3372,13 @@ back_login_button = ctk.CTkButton(
     width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
     height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
     text="Indietro")
-back_login_button.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(210, LOGIN_FRAME_HEIGHT))
+
+user_menu_label.grid(    row= 0,padx= 10,   pady= 10)
+menu_tendina_utenti.grid(row= 1,padx= 10,   pady= 10)
+passwd_login_entry.grid( row= 2,padx= 10,   pady= 10)
+passwd_label.grid(       row= 3,padx= 10,   pady= 10)
+login_button.grid(       row= 4,padx= 10,   pady= 10)
+back_login_button.grid(  row= 5,padx= 10,   pady= 10)
 
 #FRAME GESTIONE ORDINE
 ORDER_MAN_FRAME_WIDTH = 400 
@@ -3158,31 +3406,19 @@ button_conferma_ordine = ctk.CTkButton(
 )
 
 # Posizionamento del frame
-button_conferma_ordine.grid(row=0, column=0, padx=10, pady=10)
+button_conferma_ordine.grid(row=0, column=0, padx=PADX_FRAME_GESTIONE_ORDINI, pady=PADY_FRAME_GESTIONE_ORDINI)
 
-button_salva_ordine = ctk.CTkButton(
+button_storico_ordini = ctk.CTkButton(
     master=frame_gestione_ordine, 
     bg_color=['gray92', 'gray14'], 
-    text="Salva ordine",
-    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
-    command=lambda: salva_ordine()
-)
-
-# Posizionamento del frame
-#button_salva_ordine.grid(row=0, column=1, padx=10, pady=10)
-
-button_carica_ordine = ctk.CTkButton(
-    master=frame_gestione_ordine, 
-    bg_color=['gray92', 'gray14'], 
-    text="Ordini effettuati",
+    text="Storico ordini",
     width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
     height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
     command=lambda: modifica_ordine()
 )
 
 # Posizionamento del frame
-button_carica_ordine.grid(row=0, column=2, padx=10, pady=10)
+button_storico_ordini.grid(row=0, column=2, padx=PADX_FRAME_GESTIONE_ORDINI, pady=PADY_FRAME_GESTIONE_ORDINI)
 
 button_reset_ordine = ctk.CTkButton(
     master=frame_gestione_ordine, 
@@ -3194,35 +3430,17 @@ button_reset_ordine = ctk.CTkButton(
 )
 
 # Posizionamento del frame
-button_reset_ordine.grid(row=0, column=3, padx=10, pady=10)
+button_reset_ordine.grid(row=0, column=3, padx=PADX_FRAME_GESTIONE_ORDINI, pady=PADY_FRAME_GESTIONE_ORDINI)
 
 
 
 pezzi_label = ctk.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
 pezzi_label.place(x=_map_item_x(55, N_PEZZI_FRAME_WIDTH), y=_map_item_y(8, N_PEZZI_FRAME_HEIGHT))
 
-lista_utenti = get_user_databases() #["Utente1", "Utente2", "Utente3"]
-
-menu_tendina_utenti = ctk.CTkOptionMenu(
-    master=frame_login, 
-    values=[], 
-    bg_color=['gray86', 'gray17'],
-    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH), 
-    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    dropdown_font = ctk.CTkFont(
-        'Roboto',
-        size=16),
-    hover=False)
-menu_tendina_utenti.place(x=_map_item_x(25, LOGIN_FRAME_WIDTH), y=_map_item_y(37, LOGIN_FRAME_HEIGHT))
-
-frame_gestione_selezione_ordine_effettuato = ctk.CTkFrame(
-        master=modify_order_page,
-        width=ORDER_MAN_FRAME_WIDTH,
-        height=ORDER_MAN_FRAME_HEIGHT
-    )
+users_list = get_user_databases(db_config) #["Utente1", "Utente2", "Utente3"]
 
 #menu_tendina_utenti.
-menu_tendina_utenti.configure(values=lista_utenti)
+menu_tendina_utenti.configure(values=users_list)
 
 # Imposta il testo predefinito
 default_text = "Seleziona un utente"  # Puoi cambiare questo testo se necessario
@@ -3287,8 +3505,8 @@ def on_window_resize(event):
     if frame_connection_title.winfo_exists():
         frame_connection_title.place(relx=0.999, rely=0.99, anchor='se')
 
-    if frame_n_draw.winfo_exists():
-        frame_n_draw.place(relx=0.50, rely=0.4, anchor='n')
+    if frame_draw_commessa.winfo_exists():
+        frame_draw_commessa.place(relx=0.50, rely=0.4, anchor='n')
 
     if frame_gestione_ordine.winfo_exists():
         frame_gestione_ordine.place(relx=0.5, rely=0.9, anchor='s')
@@ -3336,16 +3554,11 @@ def on_checkbox_change(checkbox_name):
 
     elif checkbox_name == "draw_mode":
         draw_check = draw_mode_checkbox.get()
+        
         if draw_check:
-            draw_num_entry.place_forget()
-            menu_tendina_disegni.place(relx = 0.02, rely=0.4)
-            draw_open_pdf_button.place(relx = 0.775, rely=0.4)
-            save_config("draw_mode_checkbox", draw_check)
+            draw_number_frame_visual_mode('auto')
         else:
-            draw_num_entry.place(relx = 0.09, rely=0.4)
-            menu_tendina_disegni.place_forget()
-            draw_open_pdf_button.place_forget()
-            save_config("draw_mode_checkbox", draw_check)
+            draw_number_frame_visual_mode('manual')
 
 numpad_login = CTkPopupKeyboard.PopupNumpad(
     attach= passwd_login_entry,
@@ -3361,16 +3574,70 @@ numpad_singup_password = CTkPopupKeyboard.PopupNumpad(
     keyheight= KEYHEIGHT
     )
 
-numpad_singup_password = CTkPopupKeyboard.PopupNumpad(
+numpad_singup_repeat_password = CTkPopupKeyboard.PopupNumpad(
     attach= passwd_repeat_singup_entry,
     keycolor= 'dodgerblue2',
     keywidth= KEYWIDTH,
     keyheight= KEYHEIGHT
     )
 
-switch = ctk.CTkSwitch(login_page, text="On-Screen Numboard", command=show_popup)
-switch.pack(pady=10)
-switch.toggle()
+numpad_setup = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_setup_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_taglio = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_taglio_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_fresatura = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_fresatura_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_tornitura = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_tornitura_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_elettro = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_elettro_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_n_pezzi = CTkPopupKeyboard.PopupNumpad(
+    attach= pezzi_select_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+numpad_setup = CTkPopupKeyboard.PopupNumpad(
+    attach= tempo_tornitura_num.entry,
+    keycolor= 'dodgerblue2',
+    keywidth= KEYWIDTH,
+    keyheight= KEYHEIGHT
+    )
+
+
+switch_login = ctk.CTkSwitch(login_page, text="On-Screen Numboard", command=show_popup_login)
+switch_login.pack(pady=10)
+switch_login.toggle()
+
+switch_singup = ctk.CTkSwitch(singup_page, text="On-Screen Numboard", command=show_popup_singup)
+switch_singup.pack(pady=10)
+switch_singup.toggle()
 
 # Associa la funzione on_checkbox_change a ciascun checkbox
 tornitura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("tornitura"))
@@ -3383,9 +3650,9 @@ draw_mode_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("draw_mod
 def schedule_check():
     # Esegui il controllo e poi pianifica il prossimo controllo
     check_db_connection(db_config)
-    root.after(5000, schedule_check)  # 5000 millisecondi = 5 secondi
+    root.after(30000, schedule_check)  # 5000 millisecondi = 5 secondi
 
-schedule_check()
+#schedule_check()
 
 root.bind("<Configure>", on_window_resize)
 

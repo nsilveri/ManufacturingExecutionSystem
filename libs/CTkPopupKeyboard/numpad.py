@@ -21,6 +21,7 @@ class PopupNumpad(CTkToplevel):
         
         if sys.platform.startswith("win"):
             self.overrideredirect(True)
+            #self.bind('<Configure>', lambda e: self.withdraw() if not self.disable else None, add="+")
             self.transparent_color = self._apply_appearance_mode(self._fg_color)
             self.attributes("-transparentcolor", self.transparent_color)
         elif sys.platform.startswith("darwin"):
@@ -146,17 +147,39 @@ class PopupNumpad(CTkToplevel):
     def _attach_key_press(self, k):
         if k == '◀':
             try:
-                text = self.attach.get(0.0, END)
-                self.attach.delete(0.0, END)
-                self.attach.insert(0.0, text[:-2])
-            except TypeError:
-                text = self.attach.get()
-                self.attach.delete(0, END)
-                self.attach.insert(0, text[:-1])
+                try:
+                    text = self.attach.get(0.0, END)
+                    self.attach.delete(0.0, END)
+                    self.attach.insert(0.0, text[:-2])
+                except TypeError:
+                    text = self.attach.get()
+                    self.attach.delete(0, END)
+                    self.attach.insert(0, text[:-1])
+            except:
+                print("spin mode")
+                #spinbox_value = str(self.attach.get())
+                #spinbox_value = spinbox_value[:-1]
+                #if spinbox_value == '': 
+                #    spinbox_value = '0'
+                #self.attach.configure(value= int(spinbox_value))
+            
             return
         if k == ".":
             if self.point:
-                self.attach.insert(INSERT, k)
+                try:
+                    self.attach.insert(INSERT, k) #prova l'inserimento supponendo che l'attach sia un Entry
+                except:
+                    print("spin mode")
+                    #spinbox_value = str(self.attach.get())
+                    #spinbox_value += k
+                    #self.attach.configure(value= int(spinbox_value)) #tenta l'iserimento supponendo che l'attach sia uno SpinBox
         else:
-            self.attach.insert(INSERT, k)
-
+            try:
+                self.attach.insert(INSERT, k) #prova l'inserimento supponendo che l'attach sia un Entry
+            except:
+                print("spin mode")
+                #spinbox_value = str(self.attach.get())
+                #if spinbox_value == '0':
+                #    spinbox_value = ''
+                #spinbox_value += k
+                #self.attach.configure(value= int(spinbox_value)) #tenta l'iserimento supponendo che l'attach sia uno SpinBox
