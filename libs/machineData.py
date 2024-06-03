@@ -217,7 +217,7 @@ class MachineManager:
 
             def get_prod_data(self, name):
                 if name in self.production:
-                    print("\nContenuto di self.production:", self.production[name])  # Output di debug
+                    #print("\nContenuto di self.production:", self.production[name])  # Output di debug
                     return self.production.get(name)
                 else:
                     print(f"Errore: Il dato '{name}' non esiste.")

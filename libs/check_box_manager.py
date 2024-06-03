@@ -17,7 +17,7 @@ class CheckboxStateHandler:
         if checkbox_states is None:
             return 0
         count = sum(1 for state in checkbox_states.values() if isinstance(state, bool) and state)
-        print("count:", count)
+        #print("count:", count)
         return count
 
     def set_checkbox_states(self, checkbox_states, MACCHINARIO):
