@@ -13,9 +13,10 @@ import sys
 import subprocess
 import json
 import os
-from libs import CTkPopupKeyboard
+from libs import CTkPopupKeyboard, machineData, check_box_manager
 import tkinter as tk
 import shutil
+from threading import Timer
 
 ORIGINAL_WIDTH =  800
 ORIGINAL_HEIGHT = 500
@@ -38,10 +39,15 @@ DATA_ORDER_CHANGE = False
 
 TABLE_ORDERS_ROW = 20
 
-UPDATE_TIMER_DELAY = 100
+UPDATE_TIMER_DELAY = 1000
 
 LOAD_TEMP = True
 MENU_MODIFICA_DATI = False
+
+# Creazione del gestore di timer
+#timer_manager = machineData.TimerManager()
+
+machine_data = machineData.MachineManager()
 
 selected_row = None
 selected_column = None
@@ -52,13 +58,15 @@ column_value = None
 new_date = None
 value_for_db = None
 
+MACHINE_SELECT_STATE = False
+
 recent_orders_from_db = []
 
 intestazioni = ["ID", "Inizio", "Fine", "Numero disegno", "T. taglio", "T. tornitura", 
                         "T. fresatura", "T. elettro..", "T. setup", "N pezzi", "Note", 'Commessa']
 
-selected_checkbox = None
-selected_checkbox_text = ''
+#selected_checkbox = None
+#selected_checkbox_text = ''
 
 root_width = ORIGINAL_WIDTH
 root_height = ORIGINAL_HEIGHT
@@ -67,8 +75,6 @@ selected_order_from_table = None
 
 numpad_x = 0
 numpad_y = 0
-
-#ctk.set_window_scaling(1)  # window geometry dimensions
 
 db_index_to_names = {
     0: "id",
@@ -99,6 +105,30 @@ db_names_to_index = {
     "note_lavorazione": 10,
     "commessa_lavorazione": 11
 }
+
+machines = [
+    "PUMA",
+    "ECOCA-SJ20", 
+    "E.CUT", 
+    "DVF5000", 
+    "DMU50",
+    "AWEA"
+            ]
+
+checkBoxMan = check_box_manager.CheckboxStateHandler(machine_data)
+
+ # Impostazione dei dati booleani
+checkbox_states = {
+    "taglio": False,
+    "tornitura": False,
+    "fresatura": False,
+    "elettro": False
+}
+#checkBoxMan.set_checkbox_states(checkbox_states)
+
+
+# Inizializza MACCHINARIO con il primo elemento della lista
+MACCHINARIO = machines[0]
 
 def load_config(conf_item, default=None):
     default_config = {
@@ -304,6 +334,11 @@ singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border
 login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 modify_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
 
+for machine in machines:
+    machine_data.add_empty_machine(machine)
+
+
+
 def check_draw_exist_connection(db_config, codice_disegno):
     try:
         # Connessione al database
@@ -375,6 +410,7 @@ pdf_file_list = get_pdf_files_in_directory(directory_path)
 #FRAME TITLE
 FRAME_TITLE_WIDTH = 152
 FRAME_TITLE_HEIGHT = 40
+
 frame_app_title = ctk.CTkFrame(
     master=home_page, 
     width=_map_item_x(162, FRAME_TITLE_WIDTH), 
@@ -409,40 +445,248 @@ frame_connection_title = ctk.CTkFrame(
 
 connection_state_text = "Utente: " + LOGGED_USER + "DB: " + DB_STATE
 
-label_connessione = ctk.CTkLabel(
+label_logged_user = ctk.CTkLabel(
     master=frame_connection_title,
     font=ctk.CTkFont(
         'Roboto',
         size=15),
     bg_color=['gray86','gray17'],
     height=10,
-    text= connection_state_text,
-    justify="left")
+    text= f"Utente: {LOGGED_USER}")
 
-label_connessione.place(x=_map_item_x(10, FRAME_CONN_WIDTH), rely=0.2)
+label_db_conn_state = ctk.CTkLabel(
+    master=frame_connection_title,
+    font=ctk.CTkFont(
+        'Roboto',
+        size=15),
+    bg_color=['gray86','gray17'],
+    height=10,
+    text= f"DB: {DB_STATE}")
+
+label_logged_user.grid(row= 0, column= 0, padx= 5, pady= 5)
+label_db_conn_state.grid(row= 0, column= 1, padx= 5, pady= 5)
 
 def update_db_user_state():
     if(LOGGED_USER == ''):
         LOGGED_USER_AUX = 'Ness.utente'
     else:
         LOGGED_USER_AUX = LOGGED_USER
-    connection_state_text = "Accesso: " + LOGGED_USER_AUX + " DB: " + str(DB_STATE)  + "    "
-    label_connessione.configure(text=connection_state_text)
-
-    # Calcola la larghezza del testo del messaggio di stato della connessione
-    text_width = ctk.CTkFont('Roboto', size=15).measure(connection_state_text)
-
-    # Aggiorna la larghezza del frame e del label in base alla larghezza del testo
-    frame_connection_title.configure(width=_map_frame_x(text_width + 10))  # Aggiungi un po' di spazio extra
-    label_connessione.configure(width=_map_frame_x(text_width + 10))
-
-    # Ora posiziona il label al centro del frame
-    label_connessione.place(x=_map_item_x(10, FRAME_CONN_WIDTH), rely=0.5, anchor="w")  # Ancoraggio a sinistra
+    label_logged_user.configure(text=f"Utente: {LOGGED_USER_AUX}")
+    label_db_conn_state.configure(text=f"DB: {DB_STATE}")
 
 def switch_page_for_login():
     global users_list
+
+    '''
+    def show_popup_login():
+        # Disable/Enable popup
+        if switch_login.get() == 1:
+            numpad_login.disable = False
+            
+        else:
+            numpad_login.disable = True
+    '''
+
+    def perform_login(username, password):
+        global LOGGED_USER
+        global LOGGED_USER_DB
+        global LOAD_TEMP
+        global users_list
+
+        conn = None
+
+        try:
+            # Verifica se il nome utente selezionato è presente nel menu a tendina
+            if username not in users_list:
+                CTkMessagebox(
+                    master= login_page,
+                    title="Errore di login", 
+                    message="Utente non valido. Riprova!",
+                    icon="warning"
+                    )
+                return
+            
+            # Aggiungiamo "_user" al nome del database
+            db_name = f"{username}_user"
+            
+            # Connessione al database corrispondente all'utente selezionato
+            conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
+            cur = conn.cursor()
+
+            # Esempio di verifica della password nel database degli utenti
+            # In questo esempio, assumiamo che ci sia una tabella 'password' nel database dell'utente
+            # e che contenga le password crittografate degli utenti
+            cur.execute("SELECT password_hash FROM password")
+            password_hash = cur.fetchone()[0]
+
+            # Verifica se la password inserita corrisponde alla password memorizzata nel database
+            # In questo esempio, stiamo confrontando l'hash della password memorizzata con l'hash della password inserita
+            import hashlib
+            input_password_hash = hashlib.sha256(password.encode()).hexdigest()
+            if input_password_hash == password_hash:
+                CTkMessagebox(
+                    master= home_page,
+                    title="Login", 
+                    message="Login effettuato con successo!",
+                    icon="info"
+                    )
+                LOGGED_USER = username
+                LOGGED_USER_DB = db_name
+                update_db_user_state()
+                switch_page(home_page)
+                carica_temp()
+                LOAD_TEMP = False
+                print("LOAD_TEMP: " + str(LOAD_TEMP))
+            else:
+                CTkMessagebox(
+                    master= login_page,
+                    title="Errore di login", 
+                    message="Credenziali non valide. Riprova!",
+                    icon="info"
+                    )
+
+        except psycopg2.Error as e:
+            CTkMessagebox(
+                master= login_page,
+                title="Errore di login", 
+                message=f"Errore durante la connessione al database: {e}",
+                icon="info"
+                )
+
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def accedi(username, password):
+        #username = menu_tendina_utenti.get()  # Ottieni il valore immesso nella casella di testo dell'username
+        #password = passwd_login_entry.get()  # Ottieni il valore immesso nella casella di testo della password
+        
+        defaul_user = "Seleziona un utente"
+        print("Username:", username)
+        print("Password:", password)
+        if(username == defaul_user or password == ""):
+            error_type = ''
+            error_user = "devi selezionare l'username"
+            error_pass = "devi inserire la password"
+            error_user_pass = error_user + " e " + error_pass + "!"
+            if(username == defaul_user and password != ""):
+                error_type = error_user
+            if(password == "" and username != defaul_user):
+                error_type = error_pass
+            if(password == "" and username == defaul_user):
+                error_type = error_user_pass
+
+            CTkMessagebox(
+                master= login_page,
+                title="Errore",
+                message="Errore " + error_type,
+                icon="warning"
+                )
+            return
+        
+        perform_login(username, password)
+
     if users_list == ["Errore1", "Errore2", "Errore3"]:
         users_list = get_user_databases()
+
+    #switch_login = ctk.CTkSwitch(login_page, text="On-Screen Numboard", command=show_popup_login)
+    #switch_login.pack(pady=10)
+    #switch_login.toggle()
+
+    #LOGIN FRAME
+    LOGIN_FRAME_WIDTH = 190 + 20
+    LOGIN_FRAME_HEIGHT = 263 + 20
+
+    frame_login = ctk.CTkFrame(
+        master=login_page#,
+        #width=_map_frame_x(LOGIN_FRAME_WIDTH),
+        #height=_map_frame_y(LOGIN_FRAME_HEIGHT)
+        )
+
+    user_menu_label = ctk.CTkLabel(
+        master=frame_login,
+        bg_color=['gray92', 'gray14'], 
+        text="Seleziona utente"
+        )
+
+
+    menu_tendina_utenti = ctk.CTkOptionMenu(
+        master=frame_login,
+        values=[],
+        bg_color=['gray86', 'gray17'],
+        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
+        dropdown_font = ctk.CTkFont(
+            'Roboto',
+            size=16),
+        hover=False)
+
+    passwd_login_entry = ctk.CTkEntry(
+        master=frame_login, 
+        width= 140 + 10,
+        height= 28 + 10,
+        bg_color=['gray92', 'gray14']
+        )
+    passwd_login_entry.configure(show='*')
+
+    passwd_label = ctk.CTkLabel(
+        master=frame_login,
+        bg_color=['gray92', 'gray14'],
+        text="Password")
+
+    login_button = ctk.CTkButton(
+        master=frame_login, 
+        bg_color=['gray92', 'gray14'], 
+        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
+        text="Accedi")
+    
+    numpad_login = CTkPopupKeyboard.PopupNumpad(
+        attach= passwd_login_entry,
+        keycolor= 'dodgerblue2',
+        keywidth= KEYWIDTH,
+        keyheight= KEYHEIGHT
+        )
+
+    #menu_tendina_utenti.
+    menu_tendina_utenti.configure(values=users_list)
+
+    # Imposta il testo predefinito
+    default_text = "Seleziona un utente"  # Puoi cambiare questo testo se necessario
+    menu_tendina_utenti.set(default_text)
+
+    # Collega la funzione al pulsante "Accedi"
+    login_button.configure(command=lambda: accedi(menu_tendina_utenti.get(), passwd_login_entry.get()))
+
+    back_login_button = ctk.CTkButton(
+        master=frame_login,
+        bg_color=['gray92','gray14'],
+        command=lambda: switch_page(home_page),
+        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
+        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
+        text="Indietro")
+
+    user_menu_label.grid(    row= 0,padx= 10,   pady= 10)
+    menu_tendina_utenti.grid(row= 1,padx= 10,   pady= 10)
+    passwd_login_entry.grid( row= 2,padx= 10,   pady= 10)
+    passwd_label.grid(       row= 3,padx= 10,   pady= 10)
+    login_button.grid(       row= 4,padx= 10,   pady= 10)
+    back_login_button.grid(  row= 5,padx= 10,   pady= 10)
+
+    if frame_login.winfo_exists():
+        frame_login.place(relx=0.50, rely=0.1, anchor='n')
+        # Ottieni le coordinate del frame login rispetto alla finestra principale
+        frame_login_x = frame_login.winfo_rootx()
+        frame_login_y = frame_login.winfo_rooty()
+
+        # Ottieni le dimensioni del frame login
+        frame_login_width = frame_login.winfo_width()
+        frame_login_height = frame_login.winfo_height()
+
+        # Calcola le coordinate per posizionare il numpad accanto al frame login
+        numpad_x = frame_login_x + frame_login_width + 10  # Aggiungi 10 pixel di padding
+        numpad_y = frame_login_y
+
     menu_tendina_utenti.configure(values=users_list)
     switch_page(login_page)
 
@@ -488,55 +732,6 @@ SETUP_TIME_FRAME_WIDTH = 210
 SETUP_TIME_FRAME_HEIGHT_MANUAL = 100
 SETUP_TIME_FRAME_HEIGHT_AUTO = 150
 
-setup_paused_time = 0  # Variabile per memorizzare il tempo trascorso prima della pausa
-setup_elapsed_time = 0  # Variabile per memorizzare il tempo trascorso total
-elapsed_seconds = 0
-setup_minutes = 0
-setup_seconds = 0
-time_setup_timer_current_button = None
-
-# Funzione per avviare il setup
-def start_setup():
-    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button
-    time_setup_timer_current_button = 'start'
-    setup_button_stop.configure(state= "enabled")
-    setup_button_inizio.configure(state= "disabled")
-    if setup_start_time is None:
-        setup_start_time = time.time()
-    else:
-        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
-        setup_paused_time = time.time() - setup_paused_time  # Calcola il tempo di pausa
-        setup_start_time += setup_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
-    update_elapsed_time_setup()  # Avvia l'aggiornamento del tempo trascorso
-
-# Funzione per fermare il setup
-def stop_setup():
-    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button
-    time_setup_timer_current_button = 'stop'
-    setup_button_stop.configure(state= "disabled")
-    setup_button_inizio.configure(state= "enabled")
-    if setup_start_time is not None:
-        setup_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
-        setup_elapsed_time += setup_paused_time - setup_start_time  # Aggiorna il tempo totale trascorso
-        # setup_start_time = None  # Non resettare setup_start_time
-
-# Funzione per resettare il setup
-def reset_setup(type_req = None):
-    global setup_start_time, setup_paused_time, setup_elapsed_time, time_setup_timer_current_button, setup_minutes, setup_seconds
-    if type_req == None:
-        if(not ask_question_choice("Sei sicuro di voler resettare il timer di setup?")):
-            return
-    time_setup_timer_current_button = 'reset'
-    setup_button_stop.configure(state="disabled")
-    setup_button_inizio.configure(state= "enabled")
-    setup_start_time = None  # Resetta setup_start_time
-    setup_paused_time = 0  # Resetta il tempo di pausa
-    setup_elapsed_time = 0  # Resetta il tempo trascorso totale
-    setup_minutes = 0
-    setup_seconds = 0
-    setup_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
-
-
 #GENERAZIONE FRAME
 frame_setup_time = ctk.CTkFrame(
     master=home_page,
@@ -560,7 +755,8 @@ tempo_setup_num = CTkSpinbox(
     width=_map_item_x(76, SETUP_TIME_FRAME_WIDTH), 
     height=_map_item_y(44, SETUP_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
-    fg_color=['gray81', 'gray20']
+    fg_color=['gray81', 'gray20'],
+    command= lambda: machine_data.machines[MACCHINARIO].timers.set_start("setup", int(tempo_setup_num.get()))
 )
 tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
 
@@ -581,7 +777,7 @@ setup_button_inizio = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Avvia",
-    command=lambda: start_setup()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.start_timer("setup")
 )
 
 setup_button_stop = ctk.CTkButton(
@@ -590,7 +786,7 @@ setup_button_stop = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Stop",
-    command=lambda: stop_setup()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.stop_timer("setup") #stop_setup()
 )
 
 setup_button_reset = ctk.CTkButton(
@@ -599,35 +795,67 @@ setup_button_reset = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Reset",
-    command=lambda: reset_setup()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.reset_timer("setup") #reset_setup()
 )
 
 #GENERAZIONE LABEL PER IL TEMPO TRASCORSO
 setup_time_elapsed_label = ctk.CTkLabel(
     master=frame_setup_time, 
     bg_color=['gray86', 'gray17'], 
-    text="{:d}:{:02d}".format(setup_minutes, setup_seconds)
+    text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup") #timer_manager.get_elapsed_time(MACCHINARIO, 'setup') machine_data["PUMA"].add_timer("setup")
 )
 setup_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 setup_start_time = None
 
+for machine in machines:
+    print(machine)
+    machine_data.machines[machine].timers.add_timer("setup")
+    machine_data.machines[machine].timers.add_timer("taglio")
+    machine_data.machines[machine].timers.add_timer("tornitura")
+    machine_data.machines[machine].timers.add_timer("fresatura")
+    machine_data.machines[machine].timers.add_timer("elettro")
+
+    machine_data.machines[machine].dates.add_date("inizio")
+    machine_data.machines[machine].dates.add_date("fine")
+
+    machine_data.machines[machine].prod_data.add_prod_data("pezzi")
+    machine_data.machines[machine].prod_data.set_prod_data("pezzi", 0)
+
+    machine_data.machines[machine].prod_data.add_prod_data("checkbox_state")
+    checkBoxMan.set_checkbox_states(checkbox_states, machine)
+
+    machine_data.machines[machine].prod_data.add_prod_data("numero_disegno_tendina")
+    machine_data.machines[machine].prod_data.set_prod_data("numero_disegno_tendina", "Sel. num. disegno")
+
+    machine_data.machines[machine].prod_data.add_prod_data("numero_disegno_entry")
+    machine_data.machines[machine].prod_data.set_prod_data("numero_disegno_entry", "")
+
+    machine_data.machines[machine].prod_data.add_prod_data("note_lavorazione")
+    machine_data.machines[machine].prod_data.set_prod_data("note_lavorazione", "")
+
+    machine_data.machines[machine].prod_data.add_prod_data("commessa_lavorazione")
+    machine_data.machines[machine].prod_data.set_prod_data("commessa_lavorazione", "")
+
+
+machine_data.machines[MACCHINARIO].timers.set_attach_buttons("setup", [setup_button_inizio, setup_button_stop, setup_button_reset])
+
+
+
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_setup():
-    global time_setup_timer_current_button, elapsed_seconds, setup_seconds, setup_minutes, setup_start_time
-    if setup_start_time is not None and time_setup_timer_current_button == 'start':
-        if tempo_setup_num.get() != setup_minutes and not setup_time_checkbox.get():
-            time_diff = int(tempo_setup_num.get()) - setup_minutes
-            time_diff_seconds = time_diff * 60
-            setup_start_time -= time_diff_seconds
+    setup_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup")
+    setup_time_elapsed_label.configure(text=setup_elapsed_time)
 
-        elapsed_seconds = int(time.time() - setup_start_time)
-        setup_minutes = elapsed_seconds // 60
-        setup_seconds = elapsed_seconds % 60
-        setup_time_elapsed_label.configure(text="{:d}:{:02d}".format(setup_minutes, setup_seconds))
-        if setup_minutes != tempo_setup_num.get() and setup_time_checkbox.get():
-            tempo_setup_num.configure(value=setup_minutes)
-    frame_setup_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_setup)  # Richiama se stesso ogni secondo
+    # Se il tempo trascorso non corrisponde al tempo impostato e la casella di controllo è selezionata, aggiorna il valore
+    if int(setup_elapsed_time.split(":")[0]) != int(tempo_setup_num.get()) and setup_time_checkbox.get():
+        tempo_setup_num.configure(value=int(setup_elapsed_time.split(":")[0]))
+    elif int(setup_elapsed_time.split(":")[0]) != int(tempo_setup_num.get()) and not setup_time_checkbox.get():
+        machine_data.machines[MACCHINARIO].timers.set_start("setup", int(tempo_setup_num.get()))
+
+    # Richiama la funzione ogni secondo per aggiornare il tempo trascorso
+    frame_setup_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_setup)
+
 
 def carica_temp():
     global LOAD_TEMP
@@ -651,8 +879,10 @@ def carica_temp():
                 LOAD_TEMP = False
 
                 # Imposta le variabili globali con i valori dal file JSON
-                selected_start_datetime = data["selected_start_datetime"]
-                start_time_time_elapsed_label.configure(text= selected_start_datetime)
+                machine_data.machines[MACCHINARIO].dates.set_date("inizio", data["selected_start_datetime"])
+                #selected_start_datetime = data["selected_start_datetime"]
+                start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
+                #selected_start_datetime)
                 tempo_setup_num.configure(value= data["tempo_setup_num"])
                 pezzi_select_num.configure(value= data["pezzi_select_num"])
                 tempo_taglio_num.configure(value= data["tempo_taglio_num"])
@@ -676,28 +906,47 @@ previous_data = {}
 def salva_temp():
     global LOAD_TEMP
     global selected_start_datetime, previous_data
+
+    current_data_default = {
+                "selected_start_datetime": 'null',
+                "tempo_setup_num": 0,
+                "pezzi_select_num": 0,
+                "tempo_taglio_num": 0,
+                "tempo_fresatura_num": 0,
+                "tempo_tornitura_num": 0,
+                "tempo_elettro_num": 0,
+                "menu_tendina_disegni": "Sel. num. disegno",
+                "draw_num_entry": "",
+                "note_num_entry": ""
+            }
+    
     #print(LOAD_TEMP)
     if LOGGED_USER != '' and not LOAD_TEMP:
         # Dati attuali
-        current_data = {
-            "selected_start_datetime": selected_start_datetime,
-            "tempo_setup_num": tempo_setup_num.get(),
-            "pezzi_select_num": pezzi_select_num.get(),
-            "tempo_taglio_num": tempo_taglio_num.get(),
-            "tempo_fresatura_num": tempo_fresatura_num.get(),
-            "tempo_tornitura_num": tempo_tornitura_num.get(),
-            "tempo_elettro_num": tempo_elettro_num.get(),
-            "menu_tendina_disegni": menu_tendina_disegni.get(),
-            "draw_num_entry": draw_num_entry.get(),
-            "note_num_entry": note_num_entry.get()
-        }
+        try:
+            current_data = {
+                "selected_start_datetime": machine_data.machines[MACCHINARIO].dates.get_date("inizio"),
+                "tempo_setup_num": tempo_setup_num.get(),
+                "pezzi_select_num": pezzi_select_num.get(),
+                "tempo_taglio_num": tempo_taglio_num.get(),
+                "tempo_fresatura_num": tempo_fresatura_num.get(),
+                "tempo_tornitura_num": tempo_tornitura_num.get(),
+                "tempo_elettro_num": tempo_elettro_num.get(),
+                "menu_tendina_disegni": menu_tendina_disegni.get(),
+                "draw_num_entry": draw_num_entry.get(),
+                "note_num_entry": note_num_entry.get()
+            }
 
-        # Confronta con i dati precedenti
-        if current_data != previous_data:
-            file_name = f"{LOGGED_USER}_temp.json"  # Nome del file JSON con la variabile user
-            with open(file_name, 'w') as f:
-                json.dump(current_data, f)
-            previous_data = current_data
+            #print(f"current_data: {current_data}")
+
+            # Confronta con i dati precedenti
+            if current_data != previous_data:
+                file_name = f"{LOGGED_USER}_temp.json"  # Nome del file JSON con la variabile user
+                with open(file_name, 'w') as f:
+                    json.dump(current_data, f)
+                previous_data = current_data
+        except Exception as e:
+            print(f"Errore durante il salvataggio dei dati temporanei: {e}")
 
         # Richiama la funzione salva_temp dopo un certo intervallo di tempo
     root.after(1000, lambda: salva_temp())
@@ -717,7 +966,7 @@ def setup_toggle_buttons():
         setup_button_stop.place(relx=0.4, rely=RELY_TIMER_BUTTONS)
         setup_button_reset.place(relx=0.7, rely=RELY_TIMER_BUTTONS)
         setup_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
-        setup_time_elapsed_label.configure(text="{:d}:{:02d}".format(setup_minutes, setup_seconds))
+        setup_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup")) #timer_manager.get_elapsed_time(MACCHINARIO, 'setup')) #"{:d}:{:02d}".format(setup_minutes, setup_seconds))
         tempo_setup_label.configure(text="Tempo di setup")
         setup_minutes = tempo_setup_num.get()
         #frame_setup_time.configure(height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT_AUTO))
@@ -732,7 +981,7 @@ def setup_toggle_buttons():
         #setup_start_time = None
         tempo_setup_label.configure(text="Tempo di setup(min)")
         #setup_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
-        tempo_setup_num.configure(value=setup_minutes)
+        tempo_setup_num.configure(value=machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup").split(":")[0])
 
 # Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
 setup_time_checkbox.configure(command=setup_toggle_buttons)
@@ -750,9 +999,10 @@ def show_datetime_dialog():
         selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
         selected_hour = int(hour_spinbox.get())
         selected_minute = int(minute_spinbox.get())
-        selected_start_datetime = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
-        print("Data e ora inserite:", selected_start_datetime)
-        start_time_time_elapsed_label.configure(text= selected_start_datetime)
+        datetime_set = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
+        machine_data.machines[MACCHINARIO].dates.set_date("inizio", datetime_set)
+        print("Data e ora inserite:", machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
+        start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
         dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
 
     current_date = datetime.now()
@@ -790,17 +1040,17 @@ def show_datetime_dialog():
     dialog.grab_set()   
     dialog.wait_window()
 
-
-
 def set_start_time(MODE):
     global selected_start_datetime
     if MODE == 'current_date':
-        selected_start_datetime = time.strftime('%Y-%m-%d %H:%M:%S')
-        start_time_time_elapsed_label.configure(text= selected_start_datetime)
-        print(selected_start_datetime)
+        #selected_start_datetime = time.strftime('%Y-%m-%d %H:%M:%S')
+        machine_data.machines[MACCHINARIO].dates.set_date("inizio", time.strftime('%Y-%m-%d %H:%M:%S'))
+        start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
+        #selected_start_datetime)
+        print(f"Data e ora d'inizio del {MACCHINARIO}: {machine_data.machines[MACCHINARIO].dates.get_date("inizio")}")
     elif MODE == 'set_date':
         show_datetime_dialog()
-        print(selected_start_datetime)
+        print(machine_data.machines[MACCHINARIO].dates.get_date("inizio"))#selected_start_datetime)
 
 #FRAME START TIME
 START_TIME_FRAME_WIDTH = 210
@@ -847,8 +1097,8 @@ start_time_time_elapsed_label = ctk.CTkLabel(
     text= 'Da impostare'
 )
 
-tempo_start_time_label.grid(        row= 0, column= 0, padx= 5, pady= 5)#place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
-start_time_time_elapsed_label.grid( row= 2, column= 0, padx= 5, pady= 5)#place(relx=0.1, rely=0.3)
+tempo_start_time_label.grid(        row= 0, column= 0, padx= 5, pady= 0, columnspan= 2)#place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
+start_time_time_elapsed_label.grid( row= 2, column= 0, padx= 5, pady= 0, columnspan= 2)#place(relx=0.1, rely=0.3)
 start_time_button_inizia_ora.grid(  row= 3, column= 0, padx= 5, pady= 5)#place(relx=0.1, rely=RELY_TIMER_BUTTONS)
 start_time_button_imposta.grid(     row= 3, column= 1, padx= 5, pady= 5)#place(relx=0.5, rely=RELY_TIMER_BUTTONS)
 
@@ -883,48 +1133,6 @@ taglio_minutes = 0
 taglio_seconds = 0
 time_taglio_timer_current_button = None
 
-# Funzione per avviare il taglio
-def start_taglio():
-    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button
-    time_taglio_timer_current_button = 'start'
-    taglio_button_stop.configure(state= "enabled")
-    taglio_button_inizio.configure(state= "disabled")
-    if taglio_start_time is None:
-        taglio_start_time = time.time()
-    else:
-        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
-        taglio_paused_time = time.time() - taglio_paused_time  # Calcola il tempo di pausa
-        taglio_start_time += taglio_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
-    update_elapsed_time_taglio()  # Avvia l'aggiornamento del tempo trascorso
-
-# Funzione per fermare il taglio
-def stop_taglio():
-    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button
-    time_taglio_timer_current_button = 'stop'
-    taglio_button_stop.configure(state= "disabled")
-    taglio_button_inizio.configure(state= "enabled")
-    if taglio_start_time is not None:
-        taglio_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
-        taglio_elapsed_time += taglio_paused_time - taglio_start_time  # Aggiorna il tempo totale trascorso
-        #taglio_start_time = None  # Resetta taglio_start_time
-
-# Funzione per resettare il taglio
-def reset_taglio(type_req = None):
-    global taglio_start_time, taglio_paused_time, taglio_elapsed_time, time_taglio_timer_current_button, taglio_minutes, taglio_seconds
-    if type_req == None:
-        if(not ask_question_choice("Sei sicuro di voler resettare il timer di taglio?")):
-            return
-    time_taglio_timer_current_button = 'reset'
-    taglio_button_stop.configure(state="disabled")
-    taglio_button_inizio.configure(state= "enabled")
-    taglio_start_time = None  # Resetta taglio_start_time
-    taglio_paused_time = 0  # Resetta il tempo di pausa
-    taglio_elapsed_time = 0  # Resetta il tempo trascorso totale
-    taglio_minutes = 0
-    taglio_seconds = 0
-    taglio_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
-
-
 #GENERAZIONE FRAME
 frame_taglio_time = ctk.CTkFrame(
     master=frame_container_time,
@@ -947,7 +1155,8 @@ tempo_taglio_num = CTkSpinbox(
     width=_map_item_x(76, TAGLIO_TIME_FRAME_WIDTH), 
     height=_map_item_y(44, TAGLIO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
-    fg_color=['gray81', 'gray20']
+    fg_color=['gray81', 'gray20'],
+    command= lambda: machine_data.machines[MACCHINARIO].timers.set_start("taglio", int(tempo_taglio_num.get()))
 )
 
 #GENERAZIONE CHECKBOX
@@ -973,7 +1182,7 @@ taglio_button_inizio = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Avvia",
-    command=lambda: start_taglio()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.start_timer("taglio") #timer_manager.start_timer(MACCHINARIO, "taglio")
 )
 
 taglio_button_stop = ctk.CTkButton(
@@ -982,7 +1191,7 @@ taglio_button_stop = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Stop",
-    command=lambda: stop_taglio()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.stop_timer("taglio") #timer_manager.stop_timer(MACCHINARIO, "taglio") 
 )
 
 taglio_button_reset = ctk.CTkButton(
@@ -991,34 +1200,36 @@ taglio_button_reset = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Reset",
-    command=lambda: reset_taglio()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.reset_timer("taglio") #timer_manager.reset_timer(MACCHINARIO, "taglio"
 )
 
 #GENERAZIONE LABEL PER IL TEMPO TRASCORSO
 taglio_time_elapsed_label = ctk.CTkLabel(
     master=frame_taglio_time, 
     bg_color=['gray86', 'gray17'], 
-    text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds)
+    text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio")#"{:d}:{:02d}".format(taglio_minutes, taglio_seconds)
 )
 taglio_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 taglio_start_time = None
 
+#timer_manager.add_timer(MACCHINARIO,"taglio")
+machine_data.machines[MACCHINARIO].timers.set_attach_buttons("taglio", [taglio_button_inizio, taglio_button_stop, taglio_button_reset])
+#timer_manager.set_attach_buttons(MACCHINARIO,"taglio", [taglio_button_inizio, taglio_button_stop, taglio_button_reset])
+
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_taglio():
-    global time_taglio_timer_current_button, taglio_elapsed_seconds, taglio_seconds, taglio_minutes, taglio_start_time
-    if taglio_start_time is not None and time_taglio_timer_current_button == 'start':
-        if tempo_taglio_num.get() != taglio_minutes and not taglio_time_checkbox.get():
-            time_diff = int(tempo_taglio_num.get()) - taglio_minutes
-            time_diff_seconds = time_diff * 60
-            taglio_start_time -= time_diff_seconds
+    taglio_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio")#timer_manager.get_elapsed_time(MACCHINARIO, 'taglio')
+    #print(f"taglio_elapsed_time: {taglio_elapsed_time}")
+    taglio_time_elapsed_label.configure(text=taglio_elapsed_time)
 
-        taglio_elapsed_seconds = int(time.time() - taglio_start_time)
-        taglio_minutes = taglio_elapsed_seconds // 60
-        taglio_seconds = taglio_elapsed_seconds % 60
-        taglio_time_elapsed_label.configure(text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds))
-        if(taglio_minutes > tempo_taglio_num.get() and taglio_time_checkbox.get()):
-            tempo_taglio_num.configure(value= taglio_minutes)
+    # Se il tempo trascorso non corrisponde al tempo impostato e la casella di controllo è selezionata, aggiorna il valore
+    if int(taglio_elapsed_time.split(":")[0]) != int(tempo_taglio_num.get()) and taglio_time_checkbox.get():
+        tempo_taglio_num.configure(value=int(taglio_elapsed_time.split(":")[0]))
+    elif int(taglio_elapsed_time.split(":")[0]) != int(tempo_taglio_num.get()) and not taglio_time_checkbox.get():
+        machine_data.machines[MACCHINARIO].timers.set_start("taglio", int(tempo_taglio_num.get()))
+
+    # Richiama la funzione ogni secondo per aggiornare il tempo trascorso
     frame_container_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_taglio)  # Richiama se stesso ogni secondo
 
 # Logica per mostrare i pulsanti solo quando il checkbox è selezionato
@@ -1048,7 +1259,8 @@ def taglio_toggle_buttons():
         #taglio_start_time = None
         taglio_time_label.configure(text="Tempo di taglio(min)")
         #taglio_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
-        tempo_taglio_num.configure(value=taglio_minutes)
+        tempo_taglio_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio").split(":")[0])
+        #timer_manager.get_elapsed_time(MACCHINARIO, 'taglio').split(":")[0])
 
 # Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
 taglio_time_checkbox.configure(command=taglio_toggle_buttons)
@@ -1067,47 +1279,6 @@ tornitura_elapsed_seconds = 0
 tornitura_minutes = 0
 tornitura_seconds = 0
 time_tornitura_timer_current_button = None
-
-# Funzione per avviare la tornitura
-def start_tornitura():
-    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button
-    time_tornitura_timer_current_button = 'start'
-    tornitura_button_stop.configure(state= "enabled")
-    tornitura_button_inizio.configure(state= "disabled")
-    if tornitura_start_time is None:
-        tornitura_start_time = time.time()
-    else:
-        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
-        tornitura_paused_time = time.time() - tornitura_paused_time  # Calcola il tempo di pausa
-        tornitura_start_time += tornitura_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
-    update_elapsed_time_tornitura()  # Avvia l'aggiornamento del tempo trascorso
-
-# Funzione per fermare la tornitura
-def stop_tornitura():
-    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button
-    time_tornitura_timer_current_button = 'stop'
-    tornitura_button_stop.configure(state= "disabled")
-    tornitura_button_inizio.configure(state= "enabled")
-    if tornitura_start_time is not None:
-        tornitura_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
-        tornitura_elapsed_time += tornitura_paused_time - tornitura_start_time  # Aggiorna il tempo totale trascorso
-        #tornitura_start_time = None  # Resetta tornitura_start_time
-
-# Funzione per resettare la tornitura
-def reset_tornitura(type_req = None):
-    global tornitura_start_time, tornitura_paused_time, tornitura_elapsed_time, time_tornitura_timer_current_button, tornitura_minutes, tornitura_seconds
-    if type_req == None:
-        if(not ask_question_choice("Sei sicuro di voler resettare il timer di tornitura?")):
-            return
-    time_tornitura_timer_current_button = 'reset'
-    tornitura_button_stop.configure(state="disabled")
-    tornitura_button_inizio.configure(state= "enabled")
-    tornitura_start_time = None  # Resetta tornitura_start_time
-    tornitura_paused_time = 0  # Resetta il tempo di pausa
-    tornitura_elapsed_time = 0  # Resetta il tempo trascorso totale
-    tornitura_minutes = 0
-    tornitura_seconds = 0
-    tornitura_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
 
 #GENERAZIONE FRAME
 frame_tornitura_time = ctk.CTkFrame(
@@ -1132,7 +1303,8 @@ tempo_tornitura_num = CTkSpinbox(
     width=_map_item_x(76, TORNITURA_TIME_FRAME_WIDTH), 
     height=_map_item_y(44, TORNITURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
-    fg_color=['gray81', 'gray20']
+    fg_color=['gray81', 'gray20'],
+    command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("tornitura", int(tempo_tornitura_num.get()))
 )
 tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
 
@@ -1153,7 +1325,7 @@ tornitura_button_inizio = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Avvia",
-    command=lambda: start_tornitura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.start_timer("tornitura") #timer_manager.start_timer(MACCHINARIO, "tornitura"
 )
 
 tornitura_button_stop = ctk.CTkButton(
@@ -1162,7 +1334,7 @@ tornitura_button_stop = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Stop",
-    command=lambda: stop_tornitura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.stop_timer("tornitura") #timer_manager.stop_timer(MACCHINARIO, "tornitura")
 )
 
 tornitura_button_reset = ctk.CTkButton(
@@ -1171,35 +1343,39 @@ tornitura_button_reset = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Reset",
-    command=lambda: reset_tornitura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.reset_timer("tornitura") #timer_manager.reset_timer(MACCHINARIO, "tornitura")
 )
 
 #GENERAZIONE LABEL PER IL TEMPO TRASCORSO
 tornitura_time_elapsed_label = ctk.CTkLabel(
     master=frame_tornitura_time, 
     bg_color=['gray86', 'gray17'], 
-    text="{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds)
+    text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("tornitura") 
+    #timer_manager.get_elapsed_time(MACCHINARIO, 'tornitura') #"{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds)
 )
 tornitura_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 tornitura_start_time = None
 
+#timer_manager.set_attach_buttons(MACCHINARIO, "tornitura", [tornitura_button_inizio, tornitura_button_stop, tornitura_button_reset])
+machine_data.machines[MACCHINARIO].timers.set_attach_buttons("tornitura", [tornitura_button_inizio, tornitura_button_stop, tornitura_button_reset])
+#timer_manager.set_start(MACCHINARIO, "tornitura", 5)
+
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_tornitura():
-    global time_tornitura_timer_current_button, tornitura_elapsed_seconds, tornitura_seconds, tornitura_minutes, tornitura_start_time
-    if tornitura_start_time is not None and time_tornitura_timer_current_button == 'start':
-        if tempo_tornitura_num.get() != tornitura_minutes and not tornitura_time_checkbox.get():
-            time_diff = int(tempo_tornitura_num.get()) - tornitura_minutes
-            time_diff_seconds = time_diff * 60
-            tornitura_start_time -= time_diff_seconds
+    tornitura_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("tornitura") 
+    #timer_manager.get_elapsed_time(MACCHINARIO, "tornitura")
+    #print(f"tornitura_elapsed_time: {tornitura_elapsed_time}")
+    tornitura_time_elapsed_label.configure(text=tornitura_elapsed_time)
 
-        tornitura_elapsed_seconds = int(time.time() - tornitura_start_time)
-        tornitura_minutes = tornitura_elapsed_seconds // 60
-        tornitura_seconds = tornitura_elapsed_seconds % 60
-        tornitura_time_elapsed_label.configure(text="{:d}:{:02d}".format(tornitura_minutes, tornitura_seconds))
-        if(tornitura_minutes > tempo_tornitura_num.get() and tornitura_time_checkbox.get()):
-            tempo_tornitura_num.configure(value= tornitura_minutes)
-    frame_tornitura_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_tornitura)  # Richiama se stesso ogni secondo
+    # Se il tempo trascorso non corrisponde al tempo impostato e la casella di controllo è selezionata, aggiorna il valore
+    if int(tornitura_elapsed_time.split(":")[0]) != int(tempo_tornitura_num.get()) and tornitura_time_checkbox.get():
+        tempo_tornitura_num.configure(value=int(tornitura_elapsed_time.split(":")[0]))
+    elif int(tornitura_elapsed_time.split(":")[0]) != int(tempo_tornitura_num.get()) and not tornitura_time_checkbox.get():
+        [MACCHINARIO].timers.set_start("tornitura", int(tempo_tornitura_num.get()))
+    
+    # Richiama la funzione ogni secondo per aggiornare il tempo trascorso
+    frame_container_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_tornitura)
 
 # Logica per mostrare i pulsanti solo quando il checkbox è selezionato
 def tornitura_toggle_buttons():
@@ -1222,7 +1398,8 @@ def tornitura_toggle_buttons():
         tornitura_time_elapsed_label.place_forget()
         tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
         tornitura_time_label.configure(text="Tempo di tornitura(min)")
-        tempo_tornitura_num.configure(value=tornitura_minutes)
+        tempo_tornitura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("tornitura").split(":")[0])
+        #timer_manager.get_elapsed_time(MACCHINARIO, 'tornitura').split(":")[0])
 
 # Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
 tornitura_time_checkbox.configure(command=tornitura_toggle_buttons)
@@ -1242,47 +1419,6 @@ fresatura_elapsed_seconds = 0
 fresatura_minutes = 0
 fresatura_seconds = 0
 time_fresatura_timer_current_button = None
-
-# Funzione per avviare la fresatura
-def start_fresatura():
-    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button
-    time_fresatura_timer_current_button = 'start'
-    fresatura_button_stop.configure(state= "enabled")
-    fresatura_button_inizio.configure(state= "disabled")
-    if fresatura_start_time is None:
-        fresatura_start_time = time.time()
-    else:
-        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
-        fresatura_paused_time = time.time() - fresatura_paused_time  # Calcola il tempo di pausa
-        fresatura_start_time += fresatura_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
-    update_elapsed_time_fresatura()  # Avvia l'aggiornamento del tempo trascorso
-
-# Funzione per fermare la fresatura
-def stop_fresatura():
-    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button
-    time_fresatura_timer_current_button = 'stop'
-    fresatura_button_stop.configure(state= "disabled")
-    fresatura_button_inizio.configure(state= "enabled")
-    if fresatura_start_time is not None:
-        fresatura_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
-        fresatura_elapsed_time += fresatura_paused_time - fresatura_start_time  # Aggiorna il tempo totale trascorso
-        #fresatura_start_time = None  # Resetta fresatura_start_time
-
-# Funzione per resettare la fresatura
-def reset_fresatura(type_req = None):
-    global fresatura_start_time, fresatura_paused_time, fresatura_elapsed_time, time_fresatura_timer_current_button, fresatura_minutes, fresatura_seconds
-    if type_req == None:
-        if(not ask_question_choice("Sei sicuro di voler resettare il timer di fresatura?")):
-            return
-    time_fresatura_timer_current_button = 'reset'
-    fresatura_button_stop.configure(state="disabled")
-    fresatura_button_inizio.configure(state= "enabled")
-    fresatura_start_time = None  # Resetta fresatura_start_time
-    fresatura_paused_time = 0  # Resetta il tempo di pausa
-    fresatura_elapsed_time = 0  # Resetta il tempo trascorso totale
-    fresatura_minutes = 0
-    fresatura_seconds = 0
-    fresatura_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
 
 #GENERAZIONE FRAME
 frame_fresatura_time = ctk.CTkFrame(
@@ -1307,7 +1443,8 @@ tempo_fresatura_num = CTkSpinbox(
     width=_map_item_x(76, FRESATURA_TIME_FRAME_WIDTH), 
     height=_map_item_y(44, FRESATURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
-    fg_color=['gray81', 'gray20']
+    fg_color=['gray81', 'gray20'],
+   command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("fresatura", int(tempo_fresatura_num.get()))
 )
 tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
 
@@ -1328,7 +1465,7 @@ fresatura_button_inizio = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Avvia",
-    command=lambda: start_fresatura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.start_timer("fresatura") #timer_manager.start_timer(MACCHINARIO, "fresatura"
 )
 
 fresatura_button_stop = ctk.CTkButton(
@@ -1337,7 +1474,7 @@ fresatura_button_stop = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Stop",
-    command=lambda: stop_fresatura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.stop_timer("fresatura") #timer_manager.stop_timer(MACCHINARIO, "fresatura")
 )
 
 fresatura_button_reset = ctk.CTkButton(
@@ -1346,35 +1483,40 @@ fresatura_button_reset = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Reset",
-    command=lambda: reset_fresatura()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.reset_timer("fresatura") #timer_manager.reset_timer(MACCHINARIO, "fresatura")
 )
 
 #GENERAZIONE LABEL PER IL TEMPO TRASCORSO
 fresatura_time_elapsed_label = ctk.CTkLabel(
     master=frame_fresatura_time, 
     bg_color=['gray86', 'gray17'], 
-    text="{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds)
+    text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("fresatura")
+    #timer_manager.get_elapsed_time(MACCHINARIO, 'fresatura') #"{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds)
 )
 fresatura_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 fresatura_start_time = None
 
+#timer_manager.add_timer(MACCHINARIO, "fresatura")
+machine_data.machines[MACCHINARIO].timers.set_attach_buttons("fresatura", [fresatura_button_inizio, fresatura_button_stop, fresatura_button_reset])
+#timer_manager.set_attach_buttons(MACCHINARIO, "fresatura", [fresatura_button_inizio, fresatura_button_stop, fresatura_button_reset])
+
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_fresatura():
-    global time_fresatura_timer_current_button, fresatura_elapsed_seconds, fresatura_seconds, fresatura_minutes, fresatura_start_time
-    if fresatura_start_time is not None and time_fresatura_timer_current_button == 'start':
-        if tempo_fresatura_num.get() != fresatura_minutes and not fresatura_time_checkbox.get():
-            time_diff = int(tempo_fresatura_num.get()) - fresatura_minutes
-            time_diff_seconds = time_diff * 60
-            fresatura_start_time -= time_diff_seconds
+    fresatura_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("fresatura")
+    #timer_manager.get_elapsed_time(MACCHINARIO, "fresatura")
+    #print(f"fresatura_elapsed_time: {fresatura_elapsed_time}")
+    fresatura_time_elapsed_label.configure(text=fresatura_elapsed_time)
 
-        fresatura_elapsed_seconds = int(time.time() - fresatura_start_time)
-        fresatura_minutes = fresatura_elapsed_seconds // 60
-        fresatura_seconds = fresatura_elapsed_seconds % 60
-        fresatura_time_elapsed_label.configure(text="{:d}:{:02d}".format(fresatura_minutes, fresatura_seconds))
-        if(fresatura_minutes > tempo_fresatura_num.get() and fresatura_time_checkbox.get()):
-            tempo_fresatura_num.configure(value= fresatura_minutes)
-    frame_fresatura_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_fresatura)  # Richiama se stesso ogni secondo
+    # Se il tempo trascorso non corrisponde al tempo impostato e la casella di controllo è selezionata, aggiorna il valore
+    if int(fresatura_elapsed_time.split(":")[0]) != int(tempo_fresatura_num.get()) and fresatura_time_checkbox.get():
+        tempo_fresatura_num.configure(value=int(fresatura_elapsed_time.split(":")[0]))
+    elif int(fresatura_elapsed_time.split(":")[0]) != int(tempo_fresatura_num.get()) and not fresatura_time_checkbox.get():
+        [MACCHINARIO].timers.set_start("fresatura", int(tempo_fresatura_num.get()))
+
+    # Richiama la funzione ogni secondo per aggiornare il tempo trascorso
+    frame_container_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_fresatura)
+
 
 # Logica per mostrare i pulsanti solo quando il checkbox è selezionato
 def fresatura_toggle_buttons():
@@ -1397,7 +1539,8 @@ def fresatura_toggle_buttons():
         fresatura_time_elapsed_label.place_forget()
         tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
         fresatura_time_label.configure(text="Tempo di fresatura(min)")
-        tempo_fresatura_num.configure(value=fresatura_minutes)
+        tempo_fresatura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("fresatura").split(":")[0])
+        #timer_manager.get_elapsed_time(MACCHINARIO, 'fresatura').split(":")[0])
 
 # Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
 fresatura_time_checkbox.configure(command=fresatura_toggle_buttons)
@@ -1417,47 +1560,6 @@ elettro_elapsed_seconds = 0
 elettro_minutes = 0
 elettro_seconds = 0
 time_elettro_timer_current_button = None
-
-# Funzione per avviare l'elettroerosione
-def start_elettro():
-    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button
-    time_elettro_timer_current_button = 'start'
-    elettro_button_stop.configure(state= "enabled")
-    elettro_button_inizio.configure(state= "disabled")
-    if elettro_start_time is None:
-        elettro_start_time = time.time()
-    else:
-        # Se c'è un tempo di pausa memorizzato, aggiungilo al tempo trascorso
-        elettro_paused_time = time.time() - elettro_paused_time  # Calcola il tempo di pausa
-        elettro_start_time += elettro_paused_time  # Aggiungi il tempo di pausa al tempo iniziale
-    update_elapsed_time_elettro()  # Avvia l'aggiornamento del tempo trascorso
-
-# Funzione per fermare l'elettroerosione
-def stop_elettro():
-    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button
-    time_elettro_timer_current_button = 'stop'
-    elettro_button_stop.configure(state= "disabled")
-    elettro_button_inizio.configure(state= "enabled")
-    if elettro_start_time is not None:
-        elettro_paused_time = time.time()  # Memorizza il tempo trascorso prima della pausa
-        elettro_elapsed_time += elettro_paused_time - elettro_start_time  # Aggiorna il tempo totale trascorso
-        #elettro_start_time = None  # Resetta elettro_start_time
-
-# Funzione per resettare l'elettroerosione
-def reset_elettro(type_req= None):
-    global elettro_start_time, elettro_paused_time, elettro_elapsed_time, time_elettro_timer_current_button, elettro_seconds, elettro_minutes
-    if type_req == None:
-        if(not ask_question_choice("Sei sicuro di voler resettare il timer di elettroerosione?")):
-            return
-    time_elettro_timer_current_button = 'reset'
-    elettro_button_stop.configure(state="disabled")
-    elettro_button_inizio.configure(state= "enabled")
-    elettro_start_time = None  # Resetta elettro_start_time
-    elettro_paused_time = 0  # Resetta il tempo di pausa
-    elettro_elapsed_time = 0  # Resetta il tempo trascorso totale
-    elettro_minutes = 0
-    elettro_seconds = 0
-    elettro_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
 
 #GENERAZIONE FRAME
 frame_elettro_time = ctk.CTkFrame(
@@ -1482,7 +1584,8 @@ tempo_elettro_num = CTkSpinbox(
     width=_map_item_x(76, ELETTRO_TIME_FRAME_WIDTH), 
     height=_map_item_y(44, ELETTRO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
-    fg_color=['gray81', 'gray20']
+    fg_color=['gray81', 'gray20'],
+    command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("elettro", int(tempo_elettro_num.get()))
 )
 tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
 
@@ -1503,7 +1606,7 @@ elettro_button_inizio = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Avvia",
-    command=lambda: start_elettro()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.start_timer("elettro") #timer_manager.start_timer(MACCHINARIO, "elettro"
 )
 
 elettro_button_stop = ctk.CTkButton(
@@ -1512,7 +1615,7 @@ elettro_button_stop = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Stop",
-    command=lambda: stop_elettro()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.stop_timer("elettro") #timer_manager.stop_timer(MACCHINARIO, "elettro"
 )
 
 elettro_button_reset = ctk.CTkButton(
@@ -1521,35 +1624,34 @@ elettro_button_reset = ctk.CTkButton(
     height=28 + 10,
     bg_color=['gray92', 'gray14'],
     text="Reset",
-    command=lambda: reset_elettro()
+    command=lambda: machine_data.machines[MACCHINARIO].timers.reset_timer("elettro") #timer_manager.reset_timer(MACCHINARIO, "elettro"
 )
 
 #GENERAZIONE LABEL PER IL TEMPO TRASCORSO
 elettro_time_elapsed_label = ctk.CTkLabel(
     master=frame_elettro_time, 
     bg_color=['gray86', 'gray17'], 
-    text="{:d}:{:02d}".format(elettro_minutes, elettro_seconds)
+    text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("elettro")
 )
 elettro_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 elettro_start_time = None
 
+machine_data.machines[MACCHINARIO].timers.set_attach_buttons("elettro", [elettro_button_inizio, elettro_button_stop, elettro_button_reset])
+
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_elettro():
-    global time_elettro_timer_current_button, elettro_elapsed_seconds, elettro_seconds, elettro_minutes, elettro_start_time
-    if elettro_start_time is not None and time_elettro_timer_current_button == 'start':
-        if tempo_elettro_num.get() != elettro_minutes and not elettro_time_checkbox.get():
-            time_diff = int(tempo_elettro_num.get()) - elettro_minutes
-            time_diff_seconds = time_diff * 60
-            elettro_start_time -= time_diff_seconds
+    elettro_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("elettro")
+    elettro_time_elapsed_label.configure(text=elettro_elapsed_time)
 
-        elettro_elapsed_seconds = int(time.time() - elettro_start_time)
-        elettro_minutes = elettro_elapsed_seconds // 60
-        elettro_seconds = elettro_elapsed_seconds % 60
-        elettro_time_elapsed_label.configure(text="{:d}:{:02d}".format(elettro_minutes, elettro_seconds))
-        if(elettro_minutes > tempo_elettro_num.get() and elettro_time_checkbox.get()):
-            tempo_elettro_num.configure(value= elettro_minutes)
-    frame_elettro_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_elettro)  # Richiama se stesso ogni secondo
+    # Se il tempo trascorso non corrisponde al tempo impostato e la casella di controllo è selezionata, aggiorna il valore
+    if int(elettro_elapsed_time.split(":")[0]) != int(tempo_elettro_num.get()) and elettro_time_checkbox.get():
+        tempo_elettro_num.configure(value=int(elettro_elapsed_time.split(":")[0]))
+    elif int(elettro_elapsed_time.split(":")[0]) != int(tempo_elettro_num.get()) and not elettro_time_checkbox.get():
+        [MACCHINARIO].timers.set_start("elettro", int(tempo_elettro_num.get()))
+
+    # Richiama la funzione ogni secondo per aggiornare il tempo trascorso
+    frame_container_time.after(UPDATE_TIMER_DELAY, update_elapsed_time_elettro)  # Richiama se stesso ogni secondo
 
 # Logica per mostrare i pulsanti solo quando il checkbox è selezionato
 def elettro_toggle_buttons():
@@ -1572,7 +1674,8 @@ def elettro_toggle_buttons():
         elettro_time_elapsed_label.place_forget()
         tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
         elettro_time_label.configure(text="Tempo di elettroerosione(min)")
-        tempo_elettro_num.configure(value=elettro_minutes)
+        tempo_elettro_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("elettro").split(":")[0])
+        #timer_manager.get_elapsed_time(MACCHINARIO, "elettro").split(":")[0])
 
 # Aggiungi una callback per aggiornare i pulsanti quando lo stato del checkbox cambia
 elettro_time_checkbox.configure(command=elettro_toggle_buttons)
@@ -1594,10 +1697,11 @@ pezzi_select_num = CTkSpinbox(
     master=frame_n_pezzi, bg_color=[
         'gray86', 'gray17'], 
         button_width = 50,
-        width=_map_item_x(76, N_PEZZI_FRAME_WIDTH), 
-        height=_map_item_y(44, N_PEZZI_FRAME_HEIGHT), 
+        width=_map_item_x(76, N_PEZZI_FRAME_WIDTH),
+        height=_map_item_y(44, N_PEZZI_FRAME_HEIGHT),
         value=0, 
         fg_color=['gray81', 'gray20'],
+        command= lambda: machine_data.machines[MACCHINARIO].prod_data.set_prod_data("pezzi", int(pezzi_select_num.get()))
         )
 pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44, N_PEZZI_FRAME_HEIGHT))
 
@@ -1694,6 +1798,12 @@ frame_commessa.grid(                row= 2, column= 0, padx= 5, pady=5)
 commessa_num_label.grid(            row= 0, column= 0, padx= 5)#, pady=5)
 commessa_num_entry.grid(            row= 1, column= 0, padx= 5)#, pady=5)
 
+def on_select_draw():
+    print(f'Numero disegno selezionato: {menu_tendina_disegni.get()}')
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("numero_disegno_tendina", menu_tendina_disegni.get())
+    print(f'Numero disegno selezionato: {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")}')
+    machine_data.machines[MACCHINARIO].prod_data.print_prod_data("numero_disegno_tendina")
+
 menu_tendina_disegni = ctk.CTkOptionMenu(
     master=frame_tendina_pdf, 
     values=[], 
@@ -1703,7 +1813,8 @@ menu_tendina_disegni = ctk.CTkOptionMenu(
     dropdown_font = ctk.CTkFont(
         'Roboto',
         size=16),
-    hover=False
+    hover=False,
+    command= lambda value: on_select_draw()
     )
 
 menu_tendina_disegni.configure(values=pdf_file_list)
@@ -1745,26 +1856,17 @@ frame_lavorazione = ctk.CTkFrame(master=home_page,
                                            )
 #frame_lavorazione.place(x=191, y=73)
 
-tornitura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Tornitura")
+tornitura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="tornitura")
 tornitura_checkbox.place(x=_map_item_x(115, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-fresatura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Fresatura")
+fresatura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="fresatura")
 fresatura_checkbox.place(x=_map_item_x(220, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-elettro_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray92', 'gray14'], width=72, text="Elettro")
+elettro_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray92', 'gray14'], width=72, text="elettro")
 elettro_checkbox.place(x=_map_item_x(320, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-taglio_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="Taglio")
+taglio_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="taglio")
 taglio_checkbox.place(x=_map_item_x(13, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
-
-def show_popup_login():
-    # Disable/Enable popup
-    if switch_login.get() == 1:
-        numpad_login.disable = False
-        
-    else:
-        numpad_login.disable = True
-
 
 def show_popup_singup():
     # Disable/Enable popup
@@ -1775,27 +1877,6 @@ def show_popup_singup():
     else:
         numpad_singup_password.disable = True
         numpad_singup_repeat_password.disable = True
-
-
-def show_popup_home():
-    # Disable/Enable popup
-    if switch_home_page.get() == 1: #RIPRENDI DA QUI
-        numpad_setup.disable = False
-        numpad_taglio.disable = False
-        numpad_fresatura.disable = False
-        numpad_tornitura.disable = False
-        numpad_elettro.disable = False
-        numpad_n_pezzi.disable = False
-        numpad_setup.disable = False
-        
-    else:
-        numpad_setup.disable = True
-        numpad_taglio.disable = True
-        numpad_fresatura.disable = True
-        numpad_tornitura.disable = True
-        numpad_elettro.disable = True
-        numpad_n_pezzi.disable = True
-        numpad_setup.disable = True
 
 def create_database(username):
     global db_config
@@ -1830,7 +1911,6 @@ def perform_registration():
     print(username + ", " + password + ", " + confirm_password)
 
     if password != confirm_password:
-        #show_error_message("Errore, le password non corrispondono.", 24, 110)
         CTkMessagebox(
             master= login_page,
             title="Errore di registrazione", 
@@ -1924,20 +2004,23 @@ def check_db_connection(db_config):
 # Chiamata alla funzione per verificare la connessione al database all'avvio
 check_db_connection(db_config)
 
-selected_checkboxes = []  # Lista per tenere traccia dei checkbox selezionati
+#selected_checkboxes = []  # Lista per tenere traccia dei checkbox selezionati
 
 def update_selected_checkbox(checkbox):
-    global selected_checkboxes
+    selected_checkboxes = machine_data.machines[MACCHINARIO].prod_data.get_selected_checkboxes()
+    selected_checkboxes.split(',')
 
     if checkbox in selected_checkboxes:
         selected_checkboxes.remove(checkbox)
     else:
         selected_checkboxes.append(checkbox)
 
-def update_selected_text():
-    global selected_checkboxes
-    global selected_checkbox_text
+    machine_data.machines[MACCHINARIO].prod_data.set_selected_checkboxes(selected_checkboxes)
 
+def update_selected_text():
+    selected_checkboxes = machine_data.machines[MACCHINARIO].prod_data.get_selected_checkboxes()
+    selected_checkboxes.split(',')
+    
     selected_checkbox_text = ', '.join([checkbox.cget('text') for checkbox in selected_checkboxes])
 
 def ask_question_db_conf(host, port, user, passwd):
@@ -2134,7 +2217,7 @@ def show_db_config_dialog():
     dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
 
 
-
+'''
 def checkbox_clicked(checkbox):
     update_selected_checkbox(checkbox)
     update_selected_text()
@@ -2145,7 +2228,7 @@ tornitura_checkbox.configure(command=lambda: checkbox_clicked(tornitura_checkbox
 fresatura_checkbox.configure(command=lambda: checkbox_clicked(fresatura_checkbox))
 elettro_checkbox.configure(command=lambda: checkbox_clicked(elettro_checkbox))
 taglio_checkbox.configure(command=lambda: checkbox_clicked(taglio_checkbox))
-
+'''
 #SING-UP FRAME
 SINGUP_FRAME_WIDTH = 190 + 15
 SINGUP_FRAME_HEIGHT = 263 + 40
@@ -2475,107 +2558,6 @@ def get_user_databases(db_config):
         return ["Errore1", "Errore2", "Errore3"]
 
 
-def perform_login():
-    global LOGGED_USER
-    global LOGGED_USER_DB
-    global LOAD_TEMP
-    global users_list
-
-    #users_list = get_user_databases()
-
-    username = menu_tendina_utenti.get()  # Ottieni il valore immesso nella casella di testo dell'username
-    password = passwd_login_entry.get()  # Ottieni il valore immesso nella casella di testo della password
-    
-    try:
-        # Verifica se il nome utente selezionato è presente nel menu a tendina
-        if username not in users_list:
-            CTkMessagebox(
-                master= login_page,
-                title="Errore di login", 
-                message="Utente non valido. Riprova!",
-                icon="warning"
-                )
-            return
-        
-        # Aggiungiamo "_user" al nome del database
-        db_name = f"{username}_user"
-        
-        # Connessione al database corrispondente all'utente selezionato
-        conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-        cur = conn.cursor()
-
-        # Esempio di verifica della password nel database degli utenti
-        # In questo esempio, assumiamo che ci sia una tabella 'password' nel database dell'utente
-        # e che contenga le password crittografate degli utenti
-        cur.execute("SELECT password_hash FROM password")
-        password_hash = cur.fetchone()[0]
-
-        # Verifica se la password inserita corrisponde alla password memorizzata nel database
-        # In questo esempio, stiamo confrontando l'hash della password memorizzata con l'hash della password inserita
-        import hashlib
-        input_password_hash = hashlib.sha256(password.encode()).hexdigest()
-        if input_password_hash == password_hash:
-            CTkMessagebox(
-                master= home_page,
-                title="Login", 
-                message="Login effettuato con successo!",
-                icon="info"
-                )
-            LOGGED_USER = username
-            LOGGED_USER_DB = db_name
-            update_db_user_state()
-            switch_page(home_page)
-            carica_temp()
-            LOAD_TEMP = False
-            print("LOAD_TEMP: " + str(LOAD_TEMP))
-        else:
-            CTkMessagebox(
-                master= login_page,
-                title="Errore di login", 
-                message="Credenziali non valide. Riprova!",
-                icon="info"
-                )
-
-    except psycopg2.Error as e:
-        CTkMessagebox(
-            master= login_page,
-            title="Errore di login", 
-            message=f"Errore durante la connessione al database: {e}",
-            icon="info"
-            )
-
-    finally:
-        if conn is not None:
-            conn.close()
-
-def accedi():
-    username = menu_tendina_utenti.get()  # Ottieni il valore immesso nella casella di testo dell'username
-    password = passwd_login_entry.get()  # Ottieni il valore immesso nella casella di testo della password
-    # Fai qualcosa con i dati ottenuti, ad esempio, controlla le credenziali, accedi, ecc.
-    defaul_user = "Seleziona un utente"
-    print("Username:", username)
-    print("Password:", password)
-    if(username == defaul_user or password == ""):
-        error_type = ''
-        error_user = "devi selezionare l'username"
-        error_pass = "devi inserire la password"
-        error_user_pass = error_user + " e " + error_pass + "!"
-        if(username == defaul_user and password != ""):
-            error_type = error_user
-        if(password == "" and username != defaul_user):
-            error_type = error_pass
-        if(password == "" and username == defaul_user):
-            error_type = error_user_pass
-        CTkMessagebox(
-            master= login_page,
-            title="Errore",
-            message="Errore " + error_type,
-            icon="warning"
-            )
-        return
-    
-    perform_login()
-
 def order_to_db(TABLE_NAME):
     global LOGGED_USER
     global LOGGED_USER_DB
@@ -2583,56 +2565,66 @@ def order_to_db(TABLE_NAME):
     global selected_start_datetime
 
     if draw_mode_checkbox.get():
-        numero_disegno = str(menu_tendina_disegni.get())
+        numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")
+        #str(menu_tendina_disegni.get())
     else:
-        numero_disegno = str(draw_num_entry.get())
+        numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_entry")
+        #str(draw_num_entry.get())
     
 
     tipo_lavorazione = ''
-    orario_fine = time.strftime('%Y-%m-%d %H:%M:%S')
+    machine_data.machines[MACCHINARIO].dates.set_date("fine", time.strftime('%Y-%m-%d %H:%M:%S'))
+    orario_fine = machine_data.machines[MACCHINARIO].dates.get_date("fine")
     tempo_setup = int(tempo_setup_num.get())
     tempo_taglio = int(tempo_taglio_num.get())
     tempo_tornitura = int(tempo_tornitura_num.get())
     tempo_fresatura = int(tempo_fresatura_num.get())
     tempo_elettroerosione = int(tempo_elettro_num.get())
     numero_pezzi = int(pezzi_select_num.get())
-    orario_inizio = selected_start_datetime
-    note_lavorazione = note_num_entry.get()
-    commessa_lavorazione = commessa_num_entry.get()
-    print(f'\ncommessa_lavorazione: {commessa_num_entry.get()}')
+    orario_inizio = machine_data.machines[MACCHINARIO].dates.get_date("inizio") 
+    print(f'\norario_inizio: {orario_inizio}')
+    #selected_start_datetime
+    note_lavorazione = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("note_lavorazione")
+    print(f'\nnote_lavorazione: {note_lavorazione}')
+    #note_num_entry.get()
+    commessa_lavorazione = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("commessa_lavorazione")
+    print(f'\ncommessa_lavorazione: {commessa_lavorazione}')
+    #commessa_num_entry.get()
 
     if draw_mode_checkbox.get():
-        numero_disegno = str(menu_tendina_disegni.get())
+        numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")
+        #str(menu_tendina_disegni.get())
     else:
-        numero_disegno = str(draw_num_entry.get())
-
-    checkbox_data = selected_checkbox_text
+        numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_entry")
+        #str(draw_num_entry.get())
 
     errore_riempimento = False
+    #print("selected_start_datetime: " + str(machine_data.machines[MACCHINARIO].dates.get_date("inizio")))
 
-    if checkbox_data != "":
-        tipo_lavorazione = checkbox_data
-        print("Checkbox selezionato:", tipo_lavorazione)
-    else:
-        print("Nessun checkbox selezionato.")
-        # or tempo_taglio == 0 or tempo_tornitura == 0 or tempo_fresatura == 0 or tempo_elettroerosione == 0 
-    
-    print("selected_start_datetime: " + str(selected_start_datetime))
+    start_date = machine_data.machines[MACCHINARIO].dates.get_date("inizio")
+    print(f'\nstart_date: {start_date}')
+    print(f'orario_inizio: {orario_inizio}')
+    print(f'orario_fine: {orario_fine}')
 
     # Verifica se tutti i campi sono stati compilati e se il numero di pezzi è diverso da zero
-    if not all([orario_inizio, orario_fine, tipo_lavorazione, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '' or commessa_lavorazione == '' or selected_start_datetime == None:
+    if not all([orario_inizio, orario_fine, tempo_setup]) or numero_pezzi == 0 or numero_disegno == '' or commessa_lavorazione == '':
+        print("errore 1")
         errore_riempimento = True
     
-    if 'Taglio' in selected_checkbox_text and tempo_taglio == 0:
+    if checkBoxMan.get_checkbox_state('taglio', MACCHINARIO) == True and tempo_taglio == 0:
+        print("errore 2")
         errore_riempimento = True
         
-    if 'Tornitura' in selected_checkbox_text and tempo_tornitura == 0:
+    if checkBoxMan.get_checkbox_state('tornitura', MACCHINARIO) == True and tempo_tornitura == 0:
+        print("errore 3")
         errore_riempimento = True
 
-    if 'Fresatura' in selected_checkbox_text and tempo_fresatura == 0:
+    if checkBoxMan.get_checkbox_state('fresatura', MACCHINARIO) == True and tempo_fresatura == 0:
+        print("errore 4")
         errore_riempimento = True
 
-    if 'Elettroerosione' in selected_checkbox_text and tempo_elettroerosione == 0:
+    if checkBoxMan.get_checkbox_state('elettro', MACCHINARIO) == True and tempo_elettroerosione == 0:
+        print("errore 5")
         errore_riempimento = True
 
     if(errore_riempimento):
@@ -2679,7 +2671,8 @@ def order_to_db(TABLE_NAME):
                     
                     tempo_setup INTEGER,
                     numero_pezzi INTEGER,
-                    note_lavorazione TEXT
+                    note_lavorazione TEXT,
+                    macchina TEXT
                 )
             """.format(TABLE_NAME)
 #tempo_ciclo_totale INTEGER,
@@ -2697,11 +2690,12 @@ def order_to_db(TABLE_NAME):
                     tempo_elettroerosione, 
                     tempo_setup, 
                     numero_pezzi, 
-                    note_lavorazione)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    note_lavorazione,
+                    macchina)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """.format(TABLE_NAME)
 
-            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione))
+            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione, MACCHINARIO))
             conn.commit()
             CTkMessagebox(title="Chiusura ordine", 
                   message="Ordine chiuso con successo!",
@@ -2730,7 +2724,9 @@ def riprendi_ordine():
 
 def azzera_ordine():
     global selected_start_datetime
-    ask_question_choice("Sei sicuro di voler azzerare l'ordine?")
+    if not ask_question_choice("Sei sicuro di voler azzerare l'ordine?"):
+        return 
+    machine_data.machines[MACCHINARIO].timers.reset_all_timers()
     tempo_setup_num.configure(value= 0)
     pezzi_select_num.configure(value= 0)
     tempo_taglio_num.configure(value= 0)
@@ -2742,12 +2738,7 @@ def azzera_ordine():
     commessa_num_entry.delete('0', 'end')
     start_time_time_elapsed_label.configure(text= 'Da impostare')
     note_num_entry.delete('0', 'end')
-    selected_start_datetime = None
-    reset_elettro('force')
-    reset_fresatura('force')
-    reset_setup('force')
-    reset_tornitura('force')
-    reset_taglio('force')
+    machine_data.machines[MACCHINARIO].dates.set_date("inizio", None)
     
 
 def get_last_orders(num_ordini):
@@ -3085,7 +3076,7 @@ def modifica_ordine():
         
     def modifica_valore_colonna():
         global selected_column, column_name, column_value, new_date, selected_order_from_table, value_for_db, value_for_table
-        selected_id = selected_order_from_table[0] #RIPRENDI DA QUA
+        selected_id = selected_order_from_table[0]
         print(f'selected_id: {selected_id}, selected_order_from_db: {selected_order_from_table}')
         print(f'selected_id: {selected_id}, selected_order_from_table: {selected_order_from_table}')
         index_recent_orders = find_index_from_id(selected_id)
@@ -3281,15 +3272,26 @@ def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio,
                                orario_inizio, numero_pezzi, numero_disegno, commessa_lavorazione, note_lavorazione):
     # Formattazione dei dati come una tabella
     tabella = (
-        f"{'INIZIO:':<20}{orario_inizio}\n"
-        f"{'FINE:':<20}{orario_fine_dt}\n"
-        f"{'N DISEGNO:':<20}{numero_disegno}\n"
-        f"{'N COMMESSA:':<20}{commessa_lavorazione}\n"
-        f"{'SETUP:':<20}{tempo_setup} m\n"
-        f"{'TAGLIO:':<20}{tempo_taglio} m\n"
-        f"{'TORNITURA:':<20}{tempo_tornitura} m\n"
-        f"{'FRESATURA:':<20}{tempo_fresatura} m\n"
-        f"{'ELETTROEROSIONE:':<20}{tempo_elettroerosione} m\n"
+    f"{'INIZIO:':<20}{orario_inizio}\n"
+    f"{'FINE:':<20}{orario_fine_dt}\n"
+    f"{'N DISEGNO:':<20}{numero_disegno}\n"
+    f"{'N COMMESSA:':<20}{commessa_lavorazione}\n"
+    f"{'SETUP:':<20}{tempo_setup} m\n"
+    )
+
+    if tempo_taglio != 0:
+        tabella += f"{'TAGLIO:':<20}{tempo_taglio} m\n"
+
+    if tempo_tornitura != 0:
+        tabella += f"{'TORNITURA:':<20}{tempo_tornitura} m\n"
+
+    if tempo_fresatura != 0:
+        tabella += f"{'FRESATURA:':<20}{tempo_fresatura} m\n"
+
+    if tempo_elettroerosione != 0:
+        tabella += f"{'ELETTROEROSIONE:':<20}{tempo_elettroerosione} m\n"
+
+    tabella += (
         f"{'N PEZZI:':<20}{numero_pezzi} prodotti\n"
         f"{'NOTE.:':<20}{note_lavorazione[:10]}...\n"
     )
@@ -3313,78 +3315,204 @@ def ask_question_confirm_order(orario_fine_dt, tempo_setup, tempo_taglio,
     elif response=="Modifica":
         return False
 
-#LOGIN FRAME
-LOGIN_FRAME_WIDTH = 190 + 20
-LOGIN_FRAME_HEIGHT = 263 + 20
-
-frame_login = ctk.CTkFrame(
-    master=login_page#,
-    #width=_map_frame_x(LOGIN_FRAME_WIDTH),
-    #height=_map_frame_y(LOGIN_FRAME_HEIGHT)
-    )
-
-user_menu_label = ctk.CTkLabel(
-    master=frame_login,
-    bg_color=['gray92', 'gray14'], 
-    text="Seleziona utente"
-    )
 
 
-menu_tendina_utenti = ctk.CTkOptionMenu(
-    master=frame_login,
-    values=[],
-    bg_color=['gray86', 'gray17'],
-    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    dropdown_font = ctk.CTkFont(
-        'Roboto',
-        size=16),
-    hover=False)
+#FRAME SELEZIONA MACCHINA
+ORDER_MAN_FRAME_WIDTH = 400 
+ORDER_MAN_FRAME_HEIGHT = 200
 
-passwd_login_entry = ctk.CTkEntry(
-    master=frame_login, 
-    width= 140 + 10,
-    height= 28 + 10,
-    bg_color=['gray92', 'gray14']
-    )
-passwd_login_entry.configure(show='*')
+# Creazione del frame
+frame_seleziona_macchina = ctk.CTkFrame(
+    master=home_page
+)
 
-passwd_label = ctk.CTkLabel(
-    master=frame_login,
-    bg_color=['gray92', 'gray14'],
-    text="Password")
+def on_checkbox_change(checkbox_name):
+    global PADX
+    # Larghezza minima desiderata tra i frame
+    print(f"checkbox_name: {checkbox_name}")
 
-login_button = ctk.CTkButton(
-    master=frame_login, 
-    bg_color=['gray92', 'gray14'], 
-    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    text="Accedi")
+    if checkbox_name == "taglio":
+        if taglio_checkbox.get():
+            checkBoxMan.set_checkbox_state('taglio', True, MACCHINARIO)
+            frame_taglio_time.grid(row=0, column=0, padx=PADX)
+        else:
+            checkBoxMan.set_checkbox_state('taglio', False, MACCHINARIO)
+            frame_taglio_time.grid_remove()
+    elif checkbox_name == "tornitura":
+        if tornitura_checkbox.get():
+            checkBoxMan.set_checkbox_state('tornitura', True, MACCHINARIO)
+            frame_tornitura_time.grid(row=0, column=1, padx=PADX)
+        else:
+            checkBoxMan.set_checkbox_state('tornitura', False, MACCHINARIO)
+            frame_tornitura_time.grid_remove()
+    elif checkbox_name == "fresatura":
+        if fresatura_checkbox.get():
+            checkBoxMan.set_checkbox_state('fresatura', True, MACCHINARIO)
+            frame_fresatura_time.grid(row=0, column=2, padx=PADX)
+        else:
+            checkBoxMan.set_checkbox_state('fresatura', False, MACCHINARIO)
+            frame_fresatura_time.grid_remove()
+    elif checkbox_name == "elettro":
+        if elettro_checkbox.get():
+            checkBoxMan.set_checkbox_state('elettro', True, MACCHINARIO)
+            frame_elettro_time.grid(row=0, column=3, padx=10)
+        else:
+            checkBoxMan.set_checkbox_state('elettro', False, MACCHINARIO)
+            frame_elettro_time.grid_remove()
 
+    elif checkbox_name == "draw_mode":
+        draw_check = draw_mode_checkbox.get()
+        
+        if draw_check:
+            draw_number_frame_visual_mode('auto')
+        else:
+            draw_number_frame_visual_mode('manual')
 
-# Collega la funzione al pulsante "Accedi"
-login_button.configure(command=accedi)
+    check_number = checkBoxMan.count_true(MACCHINARIO)
+    print(f'check_number: {check_number}')
 
-back_login_button = ctk.CTkButton(
-    master=frame_login,
-    bg_color=['gray92','gray14'],
-    command=lambda: switch_page(home_page),
-    width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-    text="Indietro")
+    if(check_number > 0):
+        print(f'1')
+        width_container_time_frame = 222.5 * check_number
+        print(f'width_container_time_frame: {width_container_time_frame}')
+        if(width_container_time_frame < root_width):
+            print(f'2')
+            frame_container_time.place_forget()
+            frame_container_time.configure(width = 222.5 * check_number)
+        else:
+            print(f'3')
+            frame_container_time.place_forget()
+            frame_container_time.configure(width = root_width - 250)
+        frame_container_time.place(relx=0.50, rely=0.19, anchor='n')
+    else:
+        print(f'4')
+        frame_container_time.place_forget()
 
-user_menu_label.grid(    row= 0,padx= 10,   pady= 10)
-menu_tendina_utenti.grid(row= 1,padx= 10,   pady= 10)
-passwd_login_entry.grid( row= 2,padx= 10,   pady= 10)
-passwd_label.grid(       row= 3,padx= 10,   pady= 10)
-login_button.grid(       row= 4,padx= 10,   pady= 10)
-back_login_button.grid(  row= 5,padx= 10,   pady= 10)
+def update_widgets_data():
+    #global selected_checkbox
+    #selected_checkbox = []
+    #selected_checkbox_text = ""
+
+    #print(f'selected_checkbox: {selected_checkbox}')
+    #data inizio
+    start_time = machine_data.machines[MACCHINARIO].dates.get_date("inizio")
+    print(f"start_time: {start_time}")
+    if(start_time == None):
+        start_time_time_elapsed_label.configure(text= "Da impostare")
+    else:
+        start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))#.strftime("%Y-%m-%d %H:%M:%S"))
+    #tempo setup
+    tempo_setup_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup").split(":")[0])
+    #tempo taglio
+    tempo_taglio_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio").split(":")[0])
+    #tempo tornitura
+    tempo_tornitura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("tornitura").split(":")[0])
+    #tempo fresatura
+    tempo_fresatura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("fresatura").split(":")[0])
+    #tempo elettroerosione
+    tempo_elettro_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("elettro").split(":")[0])
+
+    #disegno
+    print(f'draw_mode_checkbox.get(): {draw_mode_checkbox.get()}')
+    if draw_mode_checkbox.get():
+        print(f': {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")}')
+        menu_tendina_disegni.set(machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina"))
+    else:
+        draw_num_entry.delete('0', 'end')
+        draw_num_entry.insert('0', machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_entry"))
+    
+    #commessa
+    commessa_num_entry.delete('0', 'end')
+    commessa_num_entry.insert('0', machine_data.machines[MACCHINARIO].prod_data.get_prod_data("commessa_lavorazione"))
+    
+    #note
+    note_num_entry.delete('0', 'end')
+    note_num_entry.insert('0', machine_data.machines[MACCHINARIO].prod_data.get_prod_data("note_lavorazione"))
+    
+    #pezzi
+    value= machine_data.machines[MACCHINARIO].prod_data.get_prod_data("pezzi")
+    pezzi_select_num.configure(value= value)
+    
+    #checkboxes
+    checkboxes = checkBoxMan.get_checkbox_states(MACCHINARIO)
+    #checkboxes = checkboxes.split(', ')
+    print(f'checkboxes: {checkboxes}')
+
+    if  checkBoxMan.get_checkbox_state('taglio', MACCHINARIO):  #'taglio' in checkboxes:
+        print('taglio in checkboxes')
+        taglio_checkbox.select()
+    else:
+        print('taglio not in checkboxes')
+        taglio_checkbox.deselect()
+        
+    if checkBoxMan.get_checkbox_state('tornitura', MACCHINARIO):  #'tornitura' in checkboxes:
+        print('tornitura in checkboxes')
+        tornitura_checkbox.select()
+    else:
+        print('tornitura not in checkboxes')
+        tornitura_checkbox.deselect()
+
+    if checkBoxMan.get_checkbox_state('fresatura', MACCHINARIO):  #'fresatura' in checkboxes:
+        print('fresatura in checkboxes')
+        fresatura_checkbox.select()
+    else:
+        print('fresatura not in checkboxes')
+        fresatura_checkbox.deselect()
+
+    if checkBoxMan.get_checkbox_state('elettro', MACCHINARIO):  #'elettro' in checkboxes:
+        print('elettroerosione in checkboxes')
+        elettro_checkbox.select()
+    else:
+        print('elettroerosione not in checkboxes')
+        elettro_checkbox.deselect()
+    
+    on_checkbox_change('taglio')
+    on_checkbox_change('tornitura')
+    on_checkbox_change('fresatura')
+    on_checkbox_change('elettro')
+
+#machine_data.machines[MACCHINARIO].prod_data.add_prod_data("pezzi")
+
+#machine_data.machines[MACCHINARIO].prod_data.set_prod_data("pezzi", "test")
+
+#print(f"machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data('pezzi', 0): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data('pezzi')}")
+
+def change_machine(machine, button):
+    global MACCHINARIO
+    MACCHINARIO = machine
+    print(f"Macchina selezionata: {machine}")
+
+    # Disabilita il pulsante corrente e abilita gli altri
+    for button in buttons:
+        if button.cget('text') == machine:
+            button.configure(state="disabled")
+        else:
+            button.configure(state="normal")
+    update_widgets_data()
+# Calcola il numero di colonne basato sul numero di macchine
+num_buttons = len(machines)
+num_rows = 1
+num_columns = (num_buttons + num_rows - 1) // num_rows
+
+buttons = []
+
+for i, machine in enumerate(machines):
+    row =  i // num_columns
+    column = i % num_columns
+    button = ctk.CTkButton(master=frame_seleziona_macchina, text=machine, width= 20, command=lambda m=machine: change_machine(m, button))
+    button.grid(row=row, column=column, padx=5, pady=5)
+    button.configure(command=lambda m=machine, b=button: change_machine(m, b))  # Passa il pulsante alla funzione
+    buttons.append(button)  # Aggiungi il pulsante alla lista dei pulsanti
+
+#print(f'buttons: {buttons}')
+
+change_machine(machines[0], buttons[0])  # Imposta la prima macchina come selezionata di default
 
 #FRAME GESTIONE ORDINE
 ORDER_MAN_FRAME_WIDTH = 400 
 ORDER_MAN_FRAME_HEIGHT = 200
 
-#FRAME GESTIONE ORDINE
+#PULSANTI GESTIONE ORDINE
 ORDER_BUTTONS_FRAME_WIDTH = 160
 ORDER_BUTTONS_FRAME_HEIGHT = 40
 
@@ -3439,12 +3567,7 @@ pezzi_label.place(x=_map_item_x(55, N_PEZZI_FRAME_WIDTH), y=_map_item_y(8, N_PEZ
 
 users_list = get_user_databases(db_config) #["Utente1", "Utente2", "Utente3"]
 
-#menu_tendina_utenti.
-menu_tendina_utenti.configure(values=users_list)
 
-# Imposta il testo predefinito
-default_text = "Seleziona un utente"  # Puoi cambiare questo testo se necessario
-menu_tendina_utenti.set(default_text)
 
 root.resizable(True, True)  # La finestra sarà ridimensionabile sia in larghezza che in altezza
 
@@ -3453,15 +3576,18 @@ def on_window_resize(event):
     global root_width
     global numpad_x
     global numpad_y
+
+    #selected_checkbox_text = machine_data.machines[MACCHINARIO].prod_data.get_prod_data('checkbox_state')
+    selected_checkbox_number = checkBoxMan.count_true(MACCHINARIO)
     # Aggiorna i valori dei widget in base alle dimensioni attuali della finestra
     root_width = root.winfo_width()
     root_height = root.winfo_height()
     if frame_container_time.winfo_exists():
-        width_container_time_frame = 222.5 * len(selected_checkbox_text.split(", "))
-        if(width_container_time_frame < root_width - 150):
+        width_container_time_frame = 222.5 * selected_checkbox_number#len(selected_checkbox_text.split(", "))
+        if(width_container_time_frame < root_width - 150 or width_container_time_frame > 800):
             #print(f"width_container_time_frame: {width_container_time_frame}, root_width: {root_width}")
             frame_container_time.place_forget()
-            frame_container_time.configure(width = 222.5 * len(selected_checkbox_text.split(", ")))
+            frame_container_time.configure(width = 222.5 * selected_checkbox_number)#len(selected_checkbox_text.split(", ")))
         else:
             frame_container_time.place_forget()
             frame_container_time.configure(width = root_width - 250)
@@ -3473,19 +3599,6 @@ def on_window_resize(event):
         frame_singup.place(relx=0.40, rely=0.1, anchor='n')
     if frame_settings.winfo_exists():
         frame_settings.place(relx=0.60, rely=0.1, anchor='n')
-    if frame_login.winfo_exists():
-        frame_login.place(relx=0.50, rely=0.1, anchor='n')
-        # Ottieni le coordinate del frame login rispetto alla finestra principale
-        frame_login_x = frame_login.winfo_rootx()
-        frame_login_y = frame_login.winfo_rooty()
-
-        # Ottieni le dimensioni del frame login
-        frame_login_width = frame_login.winfo_width()
-        frame_login_height = frame_login.winfo_height()
-
-        # Calcola le coordinate per posizionare il numpad accanto al frame login
-        numpad_x = frame_login_x + frame_login_width + 10  # Aggiungi 10 pixel di padding
-        numpad_y = frame_login_y
 
     if frame_n_pezzi.winfo_exists():
         frame_n_pezzi.place(relx=0.999, rely=0.5, anchor='e')
@@ -3510,62 +3623,15 @@ def on_window_resize(event):
 
     if frame_gestione_ordine.winfo_exists():
         frame_gestione_ordine.place(relx=0.5, rely=0.9, anchor='s')
-        
+
+    if frame_seleziona_macchina.winfo_exists():
+        frame_seleziona_macchina.place(x=0, rely=0.99, anchor='sw')
 
     if frame_note.winfo_exists():
         frame_note.place(relx=0.999, rely=0.3, anchor='e')
 
-def on_checkbox_change(checkbox_name):
-    # Larghezza minima desiderata tra i frame
-    global PADX
-    if(selected_checkbox_text):
-        width_container_time_frame = 222.5 * len(selected_checkbox_text.split(", "))
-        if(width_container_time_frame < root_width):
-            #print(f"width_container_time_frame: {width_container_time_frame}, root_width: {root_width}")
-            frame_container_time.place_forget()
-            frame_container_time.configure(width = 222.5 * len(selected_checkbox_text.split(", ")))
-        else:
-            frame_container_time.place_forget()
-            frame_container_time.configure(width = root_width - 250)
-        frame_container_time.place(relx=0.50, rely=0.19, anchor='n')
-    else:
-        frame_container_time.place_forget()
 
-    if checkbox_name == "taglio":
-        if taglio_checkbox.get():
-            frame_taglio_time.grid(row=0, column=0, padx=PADX)
-        else:
-            frame_taglio_time.grid_remove()
-    elif checkbox_name == "tornitura":
-        if tornitura_checkbox.get():
-            frame_tornitura_time.grid(row=0, column=1, padx=PADX)
-        else:
-            frame_tornitura_time.grid_remove()
-    elif checkbox_name == "fresatura":
-        if fresatura_checkbox.get():
-            frame_fresatura_time.grid(row=0, column=2, padx=PADX)
-        else:
-            frame_fresatura_time.grid_remove()
-    elif checkbox_name == "elettro":
-        if elettro_checkbox.get():
-            frame_elettro_time.grid(row=0, column=3, padx=10)
-        else:
-            frame_elettro_time.grid_remove()
 
-    elif checkbox_name == "draw_mode":
-        draw_check = draw_mode_checkbox.get()
-        
-        if draw_check:
-            draw_number_frame_visual_mode('auto')
-        else:
-            draw_number_frame_visual_mode('manual')
-
-numpad_login = CTkPopupKeyboard.PopupNumpad(
-    attach= passwd_login_entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
 
 numpad_singup_password = CTkPopupKeyboard.PopupNumpad(
     attach= passwd_singup_entry,
@@ -3631,9 +3697,17 @@ numpad_setup = CTkPopupKeyboard.PopupNumpad(
     )
 
 
-switch_login = ctk.CTkSwitch(login_page, text="On-Screen Numboard", command=show_popup_login)
-switch_login.pack(pady=10)
-switch_login.toggle()
+def on_draw_entry_change(event):
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("numero_disegno_entry", draw_num_entry.get())
+    print(f'machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data("numero_disegno_entry"): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_entry")}')
+
+def on_commessa_entry_change(event):
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("commessa_lavorazione", commessa_num_entry.get())
+    print(f'machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data("commessa_lavorazione"): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("commessa_lavorazione")}')
+
+def on_note_entry_change(event):
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("note_lavorazione", note_num_entry.get())
+    print(f'machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data("note_lavorazione"): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("note_lavorazione")}')
 
 switch_singup = ctk.CTkSwitch(singup_page, text="On-Screen Numboard", command=show_popup_singup)
 switch_singup.pack(pady=10)
@@ -3646,6 +3720,11 @@ elettro_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("elettro"))
 taglio_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("taglio"))
 
 draw_mode_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("draw_mode"))
+draw_num_entry.bind("<KeyRelease>", on_draw_entry_change)
+commessa_num_entry.bind("<KeyRelease>", on_commessa_entry_change)
+note_num_entry.bind("<KeyRelease>", on_note_entry_change)
+
+
 
 def schedule_check():
     # Esegui il controllo e poi pianifica il prossimo controllo
@@ -3657,3 +3736,7 @@ def schedule_check():
 root.bind("<Configure>", on_window_resize)
 
 root.mainloop()
+
+
+
+
