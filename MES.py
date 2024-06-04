@@ -14,6 +14,7 @@ import subprocess
 import json
 import os
 from libs import CTkPopupKeyboard, machineData, check_box_manager
+from libs.db_manager import DbManager
 import tkinter as tk
 import shutil
 from threading import Timer
@@ -44,9 +45,7 @@ UPDATE_TIMER_DELAY = 1000
 LOAD_TEMP = True
 MENU_MODIFICA_DATI = False
 
-# Creazione del gestore di timer
-#timer_manager = machineData.TimerManager()
-
+# Creazione del gestore dati delle macchine
 machine_data = machineData.MachineManager()
 
 selected_row = None
@@ -76,9 +75,6 @@ intestazioni = ["ID",
                 "Comm..",         
                 "Macch.."       
                 ]
-
-#selected_checkbox = None
-#selected_checkbox_text = ''
 
 root_width = ORIGINAL_WIDTH
 root_height = ORIGINAL_HEIGHT
@@ -138,8 +134,6 @@ checkbox_states = {
     "fresatura": False,
     "elettro": False
 }
-#checkBoxMan.set_checkbox_states(checkbox_states)
-
 
 # Inizializza MACCHINARIO con il primo elemento della lista
 MACCHINARIO = machines[0]
@@ -202,6 +196,8 @@ db_config = {
     'user':     load_config('pg_user'),      #'postgres',
     'password': load_config('pg_passwd')     #'SphDbProduzione'
 }
+
+DBMan = DbManager(db_config, LOGGED_USER_DB)
 
 def update_gui_scale(new_value):
     global GUI_SCALE
@@ -351,31 +347,6 @@ modify_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, 
 for machine in machines:
     machine_data.add_empty_machine(machine)
 
-
-
-def check_draw_exist_connection(db_config, codice_disegno):
-    try:
-        # Connessione al database
-        conn = psycopg2.connect(**{**db_config, 'dbname': LOGGED_USER_DB})
-        cur = conn.cursor()
-
-        # Esegue la query per verificare se il codice di disegno esiste nella tabella 'ordini'
-        cur.execute("SELECT * FROM ordini WHERE numero_disegno = %s", (codice_disegno,))
-        records = cur.fetchall()  # Recupera tutti i record corrispondenti alla query
-        conn.close()
-
-        if records:
-            # Se ci sono record corrispondenti, restituisci tutti i dati dei record trovati
-            print(f"records: {records}")
-            return records
-        else:
-            print("Nessun record trovato.")
-            return None
-
-    except (Exception, psycopg2.DatabaseError) as error:
-        print("Errore durante la connessione al database:", error)
-        return None
-
 def get_pdf_files_in_directory(directory_path):
     try:
         # Verifica se il percorso specificato è una directory
@@ -491,23 +462,11 @@ def update_db_user_state():
 def switch_page_for_login():
     global users_list
 
-    '''
-    def show_popup_login():
-        # Disable/Enable popup
-        if switch_login.get() == 1:
-            numpad_login.disable = False
-            
-        else:
-            numpad_login.disable = True
-    '''
-
     def perform_login(username, password):
         global LOGGED_USER
         global LOGGED_USER_DB
         global LOAD_TEMP
         global users_list
-
-        conn = None
 
         try:
             # Verifica se il nome utente selezionato è presente nel menu a tendina
@@ -522,21 +481,17 @@ def switch_page_for_login():
             
             # Aggiungiamo "_user" al nome del database
             db_name = f"{username}_user"
-            
-            # Connessione al database corrispondente all'utente selezionato
-            conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-            cur = conn.cursor()
 
-            # Esempio di verifica della password nel database degli utenti
-            # In questo esempio, assumiamo che ci sia una tabella 'password' nel database dell'utente
-            # e che contenga le password crittografate degli utenti
-            cur.execute("SELECT password_hash FROM password")
-            password_hash = cur.fetchone()[0]
+            DBMan.connect(db_name)
+            password_hash = DBMan.fetch_data("SELECT password_hash FROM password")
+            password_hash = password_hash[0][0]
 
             # Verifica se la password inserita corrisponde alla password memorizzata nel database
             # In questo esempio, stiamo confrontando l'hash della password memorizzata con l'hash della password inserita
+
             import hashlib
             input_password_hash = hashlib.sha256(password.encode()).hexdigest()
+            #print(f'input_password_hash: {input_password_hash}, password_hash: {password_hash}')
             if input_password_hash == password_hash:
                 CTkMessagebox(
                     master= home_page,
@@ -546,7 +501,7 @@ def switch_page_for_login():
                     )
                 LOGGED_USER = username
                 LOGGED_USER_DB = db_name
-                update_db_user_state()
+
                 switch_page(home_page)
                 carica_temp()
                 LOAD_TEMP = False
@@ -568,12 +523,10 @@ def switch_page_for_login():
                 )
 
         finally:
-            if conn is not None:
-                conn.close()
+            if DBMan:
+                DBMan.disconnect()
 
     def accedi(username, password):
-        #username = menu_tendina_utenti.get()  # Ottieni il valore immesso nella casella di testo dell'username
-        #password = passwd_login_entry.get()  # Ottieni il valore immesso nella casella di testo della password
         
         defaul_user = "Seleziona un utente"
         print("Username:", username)
@@ -602,10 +555,6 @@ def switch_page_for_login():
 
     if users_list == ["Errore1", "Errore2", "Errore3"]:
         users_list = get_user_databases()
-
-    #switch_login = ctk.CTkSwitch(login_page, text="On-Screen Numboard", command=show_popup_login)
-    #switch_login.pack(pady=10)
-    #switch_login.toggle()
 
     #LOGIN FRAME
     LOGIN_FRAME_WIDTH = 190 + 20
@@ -1893,36 +1842,35 @@ def show_popup_singup():
         numpad_singup_repeat_password.disable = True
 
 def create_database(username):
-    global db_config
     try:
         # Connessione al database principale
-        conn_main = psycopg2.connect(**db_config)
-        cur_main = conn_main.cursor()
+        DBMan.connect()
 
         # Verifica se il database esiste già
-        cur_main.execute("SELECT datname FROM pg_catalog.pg_database WHERE datname = %s", (f"{username}_user",))
-        if not cur_main.fetchone():
+        existing_databases = DBMan.fetch_data("SELECT datname FROM pg_catalog.pg_database WHERE datname = %s", (f"{username}_user",))
+        if not existing_databases:
             # Il database non esiste, quindi lo creiamo
-            conn_main.set_isolation_level(0)  # Imposta il livello di isolamento su autocommit
             new_db_name = f"{username}_user"
-            cur_main.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(new_db_name)))
+            DBMan.execute_query(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(new_db_name)), commit=True)
             print(f"Database '{new_db_name}' creato con successo.")
+        else:
+            new_db_name = existing_databases[0][0]
 
-
-        # Chiudiamo la connessione al database principale
-        conn_main.close()
+        # Disconnettiamo dal database principale
+        DBMan.disconnect()
 
         return new_db_name
     except Exception as e:
         print(f"Errore durante la creazione del database per '{username}': {e}")
         return None
 
+
 def perform_registration():
 
     username = user_singup_entry.get()
     password = passwd_singup_entry.get()
     confirm_password = passwd_repeat_singup_entry.get()
-    print(username + ", " + password + ", " + confirm_password)
+    #print(username + ", " + password + ", " + confirm_password)
 
     if password != confirm_password:
         CTkMessagebox(
@@ -1934,24 +1882,19 @@ def perform_registration():
         return False
     
     try:
-        import psycopg2
-        from psycopg2 import sql
-
         # Connessione al database PostgreSQL
-        conn = psycopg2.connect(**db_config)
-        cur = conn.cursor()
+        DBMan.connect(LOGGED_USER_DB)  # Connessione al database principale
 
         # Verifica se il database esiste già
-        #db_name = username
         new_db_name = create_database(username)
         print("new_db_name: " + new_db_name)
-        # Connessione al database appena creato
-        conn.close()
-        conn = psycopg2.connect(**{**db_config, 'dbname': new_db_name})
-        cur = conn.cursor()
+        
+        # Connessione al nuovo database creato
+        DBMan.disconnect()  # Disconnetti dal database principale
+        DBMan.connect(new_db_name)  # Connessione al nuovo database creato
 
         # Creazione della tabella per memorizzare la password
-        cur.execute("""
+        DBMan.execute_query("""
             CREATE TABLE password (
                 id SERIAL PRIMARY KEY,
                 password_hash TEXT
@@ -1964,15 +1907,15 @@ def perform_registration():
         # Ecco un esempio di utilizzo di hashlib per ottenere un hash della password
         import hashlib
         password_hash = hashlib.sha256(password.encode()).hexdigest()
-        cur.execute("INSERT INTO password (password_hash) VALUES (%s)", (password_hash,))
+        DBMan.execute_query("INSERT INTO password (password_hash) VALUES (%s)", (password_hash,))
 
         # Applica le modifiche
-        conn.commit()
+        DBMan.disconnect()  # Disconnetti dal nuovo database creato
+
         switch_page(home_page)
         return True
 
-    except psycopg2.Error as e:
-        conn.rollback()
+    except Exception as e:
         #messagebox.showerror("Errore di registrazione", f"Errore durante l'inserimento dell'utente nel database: {e}")
         CTkMessagebox(
             master= singup_page,
@@ -1982,41 +1925,25 @@ def perform_registration():
             )
         return False
 
-    finally:
-        try:
-            if conn is not None:
-                conn.close()
-        except:
-            CTkMessagebox(
-                master= singup_page,
-                title="Errore di registrazione", 
-                message="Errore di accesso al database",
-                icon="warning"
-                )
             
 progressbar = ctk.CTkProgressBar(master=home_page)
 #progressbar.pack(padx=20, pady=10)
 
-def check_db_connection(db_config):
+def check_db_connection():
     global DB_STATE
     start_time = time.time()
     while time.time() - start_time < 10:
-        try:
-            # Prova a connetterti al database PostgreSQL
-            conn = psycopg2.connect(**db_config)
-            conn.close()  # Chiudi immediatamente la connessione, non serve tenerla aperta
+        if DBMan.test_connection():
             DB_STATE = "Connesso"
             update_db_user_state()
             return True  # Restituisci True se la connessione è riuscita
-        except psycopg2.Error as e:
-            print(f"Errore durante la connessione al database: {e}")
-            update_db_user_state()
+        else:
             DB_STATE = 'Errore di connessione'
+            update_db_user_state()
             return False  # Restituisci False se c'è stato un errore di connessione
 
-
 # Chiamata alla funzione per verificare la connessione al database all'avvio
-check_db_connection(db_config)
+check_db_connection()
 
 #selected_checkboxes = []  # Lista per tenere traccia dei checkbox selezionati
 
@@ -2243,6 +2170,7 @@ fresatura_checkbox.configure(command=lambda: checkbox_clicked(fresatura_checkbox
 elettro_checkbox.configure(command=lambda: checkbox_clicked(elettro_checkbox))
 taglio_checkbox.configure(command=lambda: checkbox_clicked(taglio_checkbox))
 '''
+
 #SING-UP FRAME
 SINGUP_FRAME_WIDTH = 190 + 15
 SINGUP_FRAME_HEIGHT = 263 + 40
@@ -2545,19 +2473,13 @@ def get_user_databases(db_config):
         start_time = time.time()  # Memorizza il tempo di inizio del tentativo di connessione
 
         while time.time() - start_time < 10:  # Continua fino a quando non sono passati 10 secondi
-            # Connessione al database principale
-            conn_main = psycopg2.connect(**db_config)
-            cur_main = conn_main.cursor()
-
             # Ottieni i nomi dei database presenti sul server PostgreSQL
-            cur_main.execute("SELECT datname FROM pg_catalog.pg_database")
-            databases = cur_main.fetchall()
+            databases = DBMan.fetch_data("SELECT datname FROM pg_catalog.pg_database", autoconnect=LOGGED_USER_DB)
+            #print(f"Lista database: {databases}")
 
             # Filtra solo i nomi dei database che terminano con "_user"
             user_databases = [db[0].rstrip("_user") for db in databases if db[0].endswith("_user")]
-
-            # Chiudiamo la connessione al database principale
-            conn_main.close()
+            print(f"Lista database utenti: {user_databases}")
 
             return user_databases
 
@@ -2575,17 +2497,13 @@ def get_user_databases(db_config):
 def order_to_db(TABLE_NAME):
     global LOGGED_USER
     global LOGGED_USER_DB
-    global selected_checkbox_text
     global selected_start_datetime
 
     if draw_mode_checkbox.get():
         numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")
-        #str(menu_tendina_disegni.get())
     else:
         numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_entry")
-        #str(draw_num_entry.get())
     
-
     tipo_lavorazione = ''
     machine_data.machines[MACCHINARIO].dates.set_date("fine", time.strftime('%Y-%m-%d %H:%M:%S'))
     orario_fine = machine_data.machines[MACCHINARIO].dates.get_date("fine")
@@ -2659,17 +2577,12 @@ def order_to_db(TABLE_NAME):
                   icon="warning"
                   )
         return
-    
-    conn = None
 
     try:
         if(LOGGED_USER != '' and LOGGED_USER_DB != ''):
             db_name = LOGGED_USER_DB
 
-            conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-            cur = conn.cursor()
-
-            print("TABLE_NAME: " + str(TABLE_NAME))
+            DBMan.connect(db_name)
 
             query = """
                 CREATE TABLE IF NOT EXISTS {} (
@@ -2689,8 +2602,8 @@ def order_to_db(TABLE_NAME):
                     macchina TEXT
                 )
             """.format(TABLE_NAME)
-#tempo_ciclo_totale INTEGER,
-            cur.execute(query)
+
+            DBMan.execute_query(query)
             
             query = """
                 INSERT INTO {} (
@@ -2709,8 +2622,8 @@ def order_to_db(TABLE_NAME):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """.format(TABLE_NAME)
 
-            cur.execute(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione, MACCHINARIO))
-            conn.commit()
+            DBMan.execute_query(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione, MACCHINARIO))
+            
             CTkMessagebox(title="Chiusura ordine", 
                   message="Ordine chiuso con successo!",
                   icon="info"
@@ -2728,10 +2641,11 @@ def order_to_db(TABLE_NAME):
                   message=f"Errore durante la chiusura dell'ordine: {e}",
                   icon="info"
                   )
-
+    '''
     finally:
         if conn is not None:
             conn.close()
+    '''
 
 def riprendi_ordine():
     print('riprendi ordine')
@@ -2759,33 +2673,20 @@ def get_last_orders(num_ordini):
     global LOGGED_USER_DB
     
     try:
-        # Connessione al database
-        db_name = LOGGED_USER_DB
-
-        conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-        cur = conn.cursor()
-
         # Query per ottenere gli ultimi ordini
         query = f"""
             SELECT * FROM ordini
             ORDER BY id DESC
             LIMIT %s
         """
-        cur.execute(query, (num_ordini,))
-        ultimi_ordini = cur.fetchall()
-
-        # Ottenere i nomi delle colonne
-        column_names = [desc[0] for desc in cur.description]
+        #cur.execute(query, (num_ordini,))
+        column_names, ultimi_ordini = DBMan.fetch_data(query, (num_ordini,), autoconnect=LOGGED_USER_DB, column_names=True) #cur.fetchall()
 
         # Costruire una lista di dizionari usando i nomi delle colonne come chiavi
         result = []
         for row in ultimi_ordini:
             order_dict = {column_names[i]: row[i] for i in range(len(row))}
             result.append(order_dict)
-
-        # Chiudi la connessione al database
-        cur.close()
-        conn.close()
 
         print("Ultimi ordini:", result[0])
 
@@ -2832,7 +2733,7 @@ def modifica_ordine():
             global selected_order_from_table, intestazioni
             
             for col, intestazione in enumerate(intestazioni):
-                print(f'col: {col}, intestazione: {intestazione}')
+                #print(f'col: {col}, intestazione: {intestazione}')
                 table_selected_order.insert(0, col, intestazione, bg_color="lightgrey")
 
             # Popolamento della tabella con l'ordine selezionato
@@ -2905,37 +2806,36 @@ def modifica_ordine():
     def update_db_value(id, value):
         global selected_column, column_value, db_index_to_names
         db_column_name = db_index_to_names[selected_column]
-        try:
-            db_name = LOGGED_USER_DB
+        #try:
+        db_name = LOGGED_USER_DB
 
-            conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-            cur = conn.cursor()
+        # Genera la query di aggiornamento dinamicamente
+        query = f"""
+            UPDATE {'ordini'} 
+            SET {db_column_name} = %s
+            WHERE id = %s
+        """
 
-            # Genera la query di aggiornamento dinamicamente
-            query = f"""
-                UPDATE {'ordini'} 
-                SET {db_column_name} = %s
-                WHERE id = %s
-            """
+        result = DBMan.execute_query(query, (value, id), commit=True, autoconnect=db_name)
 
-            # Eseguire la query di aggiornamento con il nuovo valore e l'ID del record da aggiornare
-            cur.execute(query, (value, id))
-            conn.commit()
-
+        if result:
             CTkMessagebox(
                 title="Aggiornamento ordine",
                 message="Ordine aggiornato con successo!",
-                icon="info"
+                icon="info",
+                button_height=38,
+                button_width=150
             )
-
-        except psycopg2.Error as e:
-            print(e)
-            conn.rollback()
+        
+        else:
             CTkMessagebox(
                 title="Errore",
-                message=f"Errore durante l'aggiornamento dell'ordine: {e}",
-                icon="info"
+                message="Errore durante l'aggiornamento dell'ordine!",
+                icon="warning",
+                button_height=38,
+                button_width=150
             )
+        
 
     def machine_modify_dialog(machines):
         global DATA_ORDER_CHANGE, column_value
@@ -2956,7 +2856,7 @@ def modifica_ordine():
         dialog.title(f"Modifica {column_name}")
 
         ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
-        machine_select = ctk.CTkOptionMenu(master=dialog, values=machines)
+        machine_select = ctk.CTkOptionMenu(master=dialog, values=machines, width=76, height=44)
         #int_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, height=44)  # Personalizza i valori di 'from_' e 'to' secondo le tue esigenze
         machine_select.grid(row=0, column=1, padx=5, pady=5)
         #int_spinbox.set(column_value)
@@ -3175,38 +3075,39 @@ def modifica_ordine():
         CHOICE = ask_question_choice(f"Sei sicuro di voler eliminare l'ordine con ID:{selected_order_from_table[0]}")
 
         if CHOICE:
-            try:
-                db_name = LOGGED_USER_DB
+            db_name = LOGGED_USER_DB
 
-                conn = psycopg2.connect(**{**db_config, 'dbname': db_name})
-                cur = conn.cursor()
+            query = """
+                DELETE FROM {} 
+                WHERE id = %s
+            """.format('ordini')
 
-                query = """
-                    DELETE FROM {} 
-                    WHERE id = %s
-                """.format('ordini')
+            result = DBMan.execute_query(query, (selected_order_from_table[0],), commit=True, autoconnect=db_name)
 
-                cur.execute(query, (selected_order_from_table[0],))
-                conn.commit()
+            if result:
+                CTkMessagebox(
+                    title="Eliminazione ordine",
+                    message="Ordine eliminato con successo!",
+                    icon="info",
+                    button_height=38,
+                    button_width=150
+                )
+            
+            else:
+                CTkMessagebox(
+                    title="Errore",
+                    message="Errore durante l'eliminazione dell'ordine!",
+                    icon="warning",
+                    button_height=38,
+                    button_width=150
+                )
+                return
 
-                CTkMessagebox(title="Eliminazione ordine", 
-                            message="Ordine eliminato con successo!",
-                            icon="info"
-                            )
-                    
-                table_orders_list.delete_row(selected_row)
-                draw_table_orders()
-                button_modifica_ordine_selezionato.grid_forget()
-                button_elimina_ordine_selezionato.grid_forget()
-                frame_gestione_selezione_ordine_effettuato.place_forget()
-
-            except (Exception, psycopg2.Error) as error:
-                print("Errore durante l'eliminazione dell'ordine:", error)
-
-            finally:
-                if conn:
-                    cur.close()
-                    conn.close()
+            table_orders_list.delete_row(selected_row)
+            draw_table_orders()
+            button_modifica_ordine_selezionato.grid_forget()
+            button_elimina_ordine_selezionato.grid_forget()
+            frame_gestione_selezione_ordine_effettuato.place_forget()
 
     frame_order = ctk.CTkFrame(master=modify_order_page)
     frame_order.place(relx=0.5, anchor='n')
@@ -3313,7 +3214,7 @@ def modifica_ordine():
                 print(f'val_for_table: {val_for_table}')
                 table_orders_list.insert(row, col_index, val_for_table)
                 val_for_table = None
-        print(recent_orders_from_db)
+        #print(recent_orders_from_db)
         table_orders_list.pack(expand=True, padx=20, pady=20, anchor='n')
         
 
@@ -3324,9 +3225,6 @@ def modifica_ordine():
         width=ORDER_MAN_FRAME_WIDTH,
         height=ORDER_MAN_FRAME_HEIGHT
     )
-
-
-
 
 def salva_ordine():
     order_to_db('ordini_in_sospeso')
@@ -3456,12 +3354,6 @@ def on_checkbox_change(checkbox_name):
         frame_container_time.place_forget()
 
 def update_widgets_data():
-    #global selected_checkbox
-    #selected_checkbox = []
-    #selected_checkbox_text = ""
-
-    #print(f'selected_checkbox: {selected_checkbox}')
-    #data inizio
     start_time = machine_data.machines[MACCHINARIO].dates.get_date("inizio")
     print(f"start_time: {start_time}")
     if(start_time == None):
@@ -3537,12 +3429,6 @@ def update_widgets_data():
     on_checkbox_change('tornitura')
     on_checkbox_change('fresatura')
     on_checkbox_change('elettro')
-
-#machine_data.machines[MACCHINARIO].prod_data.add_prod_data("pezzi")
-
-#machine_data.machines[MACCHINARIO].prod_data.set_prod_data("pezzi", "test")
-
-#print(f"machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data('pezzi', 0): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data('pezzi')}")
 
 def change_machine(machine, button):
     global MACCHINARIO
@@ -3627,14 +3513,10 @@ button_reset_ordine = ctk.CTkButton(
 # Posizionamento del frame
 button_reset_ordine.grid(row=0, column=3, padx=PADX_FRAME_GESTIONE_ORDINI, pady=PADY_FRAME_GESTIONE_ORDINI)
 
-
-
 pezzi_label = ctk.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
 pezzi_label.place(x=_map_item_x(55, N_PEZZI_FRAME_WIDTH), y=_map_item_y(8, N_PEZZI_FRAME_HEIGHT))
 
 users_list = get_user_databases(db_config) #["Utente1", "Utente2", "Utente3"]
-
-
 
 root.resizable(True, True)  # La finestra sarà ridimensionabile sia in larghezza che in altezza
 

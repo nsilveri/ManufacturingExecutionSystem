@@ -247,7 +247,4 @@ class MachineManager:
         machine.timers = self.TimerManager.Timers()
         machine.dates = self.DateManager.Dates()
         machine.prod_data = self.InfoProductionManager.InfoProduction()
-        self.machines[machine_name] = machine
-
-
-        
+        self.machines[machine_name] = machine     
