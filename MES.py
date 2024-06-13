@@ -1,6 +1,5 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog
 from PIL import Image
 from ctkdlib.custom_widgets import *
 from CTkMessagebox import CTkMessagebox
@@ -15,15 +14,24 @@ import json
 import os
 from libs import CTkPopupKeyboard, machineData, check_box_manager
 from libs.db_manager import DbManager
+from libs.modOrders import modifica_ordine
+from libs.loginMan import switch_page_for_login
+from libs.signMan import switch_page_for_signup
+from libs.mapFunctions import Mapper
+from libs.definitions import *
+from libs.support_functions import *
 import tkinter as tk
-import shutil
 from threading import Timer
+import libs.variables as var
+from libs import numPads, queries
+from libs import pages
+from libs.loadSaveConf import *
 
 ORIGINAL_WIDTH =  800
 ORIGINAL_HEIGHT = 500
+root_width = ORIGINAL_WIDTH
+root_height = ORIGINAL_HEIGHT
 
-LOGGED_USER = ''
-LOGGED_USER_DB = ''
 DB_STATE = 'Non connesso'
 
 DRAW_NUM = ''
@@ -38,8 +46,6 @@ PADY_FRAME_GESTIONE_ORDINI = 15
 
 DATA_ORDER_CHANGE = False
 
-TABLE_ORDERS_ROW = 20
-
 UPDATE_TIMER_DELAY = 1000
 
 LOAD_TEMP = True
@@ -47,6 +53,9 @@ MENU_MODIFICA_DATI = False
 
 # Creazione del gestore dati delle macchine
 machine_data = machineData.MachineManager()
+
+
+mapper = Mapper(ORIGINAL_WIDTH, ORIGINAL_HEIGHT, root_width, root_height)
 
 selected_row = None
 selected_column = None
@@ -58,72 +67,6 @@ new_date = None
 value_for_db = None
 
 MACHINE_SELECT_STATE = False
-
-recent_orders_from_db = []
-
-intestazioni = ["ID",               
-                "Inizio",           
-                "Fine",             
-                "N.disegno",   
-                "Taglio",        
-                "Tornitura",     
-                "Fresatura",     
-                "Elettro..",     
-                "Setup",         
-                "N pezzi",          
-                "Note",             
-                "Comm..",         
-                "Macch.."       
-                ]
-
-root_width = ORIGINAL_WIDTH
-root_height = ORIGINAL_HEIGHT
-
-selected_order_from_table = None
-
-numpad_x = 0
-numpad_y = 0
-
-db_index_to_names = {
-    0: "id",
-    1: "orario_inizio",
-    2: "orario_fine",
-    3: "numero_disegno",
-    4: "tempo_taglio",
-    5: "tempo_tornitura",
-    6: "tempo_fresatura",
-    7: "tempo_elettroerosione",
-    8: "tempo_setup",
-    9: "numero_pezzi",
-    10: "note_lavorazione",
-    11: "commessa_lavorazione",
-    12: "macchina"
-}
-
-db_names_to_index = {
-    "id": 0,
-    "orario_inizio": 1,
-    "orario_fine": 2,
-    "numero_disegno": 3,
-    "tempo_taglio": 4,
-    "tempo_tornitura": 5,
-    "tempo_fresatura": 6,
-    "tempo_elettroerosione": 7,
-    "tempo_setup": 8,
-    "numero_pezzi": 9,
-    "note_lavorazione": 10,
-    "commessa_lavorazione": 11,
-    "macchina": 12
-}
-
-machines = [
-    "PUMA",
-    "ECOCA-SJ20", 
-    "E.CUT", 
-    "DVF5000", 
-    "DMU50",
-    "AWEA"
-            ]
 
 checkBoxMan = check_box_manager.CheckboxStateHandler(machine_data)
 
@@ -197,113 +140,23 @@ db_config = {
     'password': load_config('pg_passwd')     #'SphDbProduzione'
 }
 
-DBMan = DbManager(db_config, LOGGED_USER_DB)
-
-def update_gui_scale(new_value):
-    global GUI_SCALE
-    GUI_SCALE = new_value
-    ctk.set_widget_scaling(GUI_SCALE/100)  # widget dimensions and text size
-    save_config("gui_scale", GUI_SCALE)
-
-def update_num_board(new_value):
-    global NUM_BOARD_SIZE
-    global KEYWIDTH
-    global KEYHEIGHT
-    NUM_BOARD_SIZE = new_value
-    save_config("keywidth", NUM_BOARD_SIZE)
-    save_config("keyheight", NUM_BOARD_SIZE)
-    KEYWIDTH = NUM_BOARD_SIZE
-    KEYHEIGHT = NUM_BOARD_SIZE
-
-def update_color(new_value):
-    global COLOR
-    COLOR = new_value
-    save_config("color", COLOR)
-    ctk.set_default_color_theme(load_config("color"))
+DBMan = DbManager(db_config, var.LOGGED_USER)
 
 THEME = load_config("theme", "blue")
-GUI_SCALE = load_config("gui_scale", 1)
+#GUI_SCALE = load_config("gui_scale", 1)
+var.set_gui_scale(load_config("gui_scale", 100))
 COLOR = load_config("color", "blue")
-KEYWIDTH = load_config("keywidth", 75)
-KEYHEIGHT = load_config("keyheight", 75)
+var.set_key_size(load_config("keywidth", 75), load_config("keyheight", 75))
 
-selected_start_datetime = None
-
-ctk.set_widget_scaling(GUI_SCALE/100)  # widget dimensions and text size
+ctk.set_widget_scaling(var.GUI_SCALE/100)  # widget dimensions and text size
 ctk.set_window_scaling(1)  # window geometry dimensions
 
 def restart_program():
     python = sys.executable
     subprocess.call([python, sys.argv[0]])
 
-def _map(value, from_low, from_high, to_low, to_high):
-    # Mappa il valore dall'intervallo di partenza all'intervallo di destinazione
-    if to_high != 0:
-        return (value - from_low) * (to_high - to_low) / (from_high - from_low) + to_low
-    else:
-        return value
-    
-def _map_win_x(value):
-    value_adapted = int(_map(value, 0, ORIGINAL_WIDTH, 0, root_width))
-    return value_adapted
-
-def _map_win_y(value):
-    value_adapted = int(_map(value, 0, ORIGINAL_HEIGHT, 0, root_height))
-    return value_adapted
-
-def _map_rel_x(value):
-    value_adapted = int(_map(value, 0, ORIGINAL_WIDTH, 0, root_width))
-    return value_adapted
-
-def _map_rel_y(value):
-    value_adapted = int(_map(value, 0, ORIGINAL_HEIGHT, 0, root_height))
-    return value_adapted
-
-def _map_frame_x(value):
-    global GUI_SCALE
-    gui_scale_int = GUI_SCALE/100
-
-    if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, value, 0, (value + gui_scale_int)))
-        #print("value_frame_x: " + str(value) + "---> " + str(value_adapted))
-        return value_adapted
-    else:
-        return value
-
-def _map_frame_y(value):
-    global GUI_SCALE
-    gui_scale_int = GUI_SCALE/100
-
-    if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, value, 0, (value + gui_scale_int)))
-        #print("value_frame_y: " + str(value) + "---> " + str(value_adapted) + "")
-        return value_adapted
-    else:
-        return value
-    
-def _map_item_x(value, frame_dim_x):
-    global GUI_SCALE
-    gui_scale_int = GUI_SCALE/100
-
-    if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, frame_dim_x, 0, (frame_dim_x + gui_scale_int)))
-        return value_adapted
-    else:
-        return value
-
-def _map_item_y(value, frame_dim_y):
-    global GUI_SCALE
-    gui_scale_int = GUI_SCALE/100
-    
-    if(GUI_SCALE != 0):
-        value_adapted = int(_map(value, 0, frame_dim_y, 0, (frame_dim_y + gui_scale_int)))
-        return value_adapted
-    else:
-        return value
-
-
 def switch_page(page):
-    pages = [home_page, singup_page, login_page, modify_order_page]
+    pages = [home_page, signup_page, login_page, modify_order_page]
     for i in pages:
         i.pack_forget()
     page.pack(expand=True, fill='both')
@@ -313,36 +166,17 @@ def switch_page(page):
         widget.lift()
         widget.place(x=widget.winfo_x(), y=widget.winfo_y())
 
-def ask_question_choice(message):
-     # Creazione del messaggio di messagebox
-    msg = CTkMessagebox(
-        master= home_page,
-        title="Conferma ordine", 
-        message= message,
-        width=500,
-        icon="question", 
-        option_1="Conferma", 
-        option_2="No" 
-    )
-
-    # Ottieni la risposta dal messagebox
-    response = msg.get()
-    
-    if response=="Conferma":
-        return True
-    elif response=="No":
-        return False
-
 root = ctk.CTk()
 root.title("MES Industry")
 root.geometry((f"{ORIGINAL_WIDTH}x{ORIGINAL_HEIGHT}"))
 root.resizable(False, False)
 
-home_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-home_page.pack(expand=True, fill='both')
-singup_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-login_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
-modify_order_page = ctk.CTkFrame(root, fg_color='transparent', corner_radius=0, border_width=0)
+pages_list = pages.Pages(root)
+
+home_page = pages_list.home_page
+signup_page = pages_list.signup_page
+login_page = pages_list.login_page
+modify_order_page = pages_list.modify_order_page
 
 for machine in machines:
     machine_data.add_empty_machine(machine)
@@ -387,7 +221,7 @@ def get_pdf_files_in_directory(directory_path):
             icon="error",
             option_1="OK"
         )
-        return []        
+        return []
 
 directory_path = load_config("draw_directory")
 pdf_file_list = get_pdf_files_in_directory(directory_path)
@@ -398,8 +232,8 @@ FRAME_TITLE_HEIGHT = 40
 
 frame_app_title = ctk.CTkFrame(
     master=home_page, 
-    width=_map_item_x(162, FRAME_TITLE_WIDTH), 
-    height=_map_item_y(40, FRAME_TITLE_HEIGHT)
+    width=mapper._map_item_x(162, FRAME_TITLE_WIDTH), 
+    height=mapper._map_item_y(40, FRAME_TITLE_HEIGHT)
     )
 
 frame_app_title.place(x=0, y=0)
@@ -424,11 +258,11 @@ FRAME_CONN_HEIGHT = 30
 
 frame_connection_title = ctk.CTkFrame(
     master=home_page, 
-    width=_map_frame_x(FRAME_CONN_WIDTH),
-    height=_map_frame_y(FRAME_CONN_HEIGHT)
+    width=mapper._map_frame_x(FRAME_CONN_WIDTH),
+    height=mapper._map_frame_y(FRAME_CONN_HEIGHT)
     )
 
-connection_state_text = "Utente: " + LOGGED_USER + "DB: " + DB_STATE
+connection_state_text = "Utente: " + var.LOGGED_USER + "DB: " + DB_STATE
 
 label_logged_user = ctk.CTkLabel(
     master=frame_connection_title,
@@ -437,7 +271,7 @@ label_logged_user = ctk.CTkLabel(
         size=15),
     bg_color=['gray86','gray17'],
     height=10,
-    text= f"Utente: {LOGGED_USER}")
+    text= f"Utente: {var.LOGGED_USER}")
 
 label_db_conn_state = ctk.CTkLabel(
     master=frame_connection_title,
@@ -452,240 +286,56 @@ label_logged_user.grid(row= 0, column= 0, padx= 5, pady= 5)
 label_db_conn_state.grid(row= 0, column= 1, padx= 5, pady= 5)
 
 def update_db_user_state():
-    if(LOGGED_USER == ''):
+    if(var.LOGGED_USER == ''):
         LOGGED_USER_AUX = 'Ness.utente'
     else:
-        LOGGED_USER_AUX = LOGGED_USER
+        LOGGED_USER_AUX = var.LOGGED_USER
     label_logged_user.configure(text=f"Utente: {LOGGED_USER_AUX}")
     label_db_conn_state.configure(text=f"DB: {DB_STATE}")
 
-def switch_page_for_login():
-    global users_list
-
-    def perform_login(username, password):
-        global LOGGED_USER
-        global LOGGED_USER_DB
-        global LOAD_TEMP
-        global users_list
-
-        try:
-            # Verifica se il nome utente selezionato è presente nel menu a tendina
-            if username not in users_list:
-                CTkMessagebox(
-                    master= login_page,
-                    title="Errore di login", 
-                    message="Utente non valido. Riprova!",
-                    icon="warning"
-                    )
-                return
-            
-            # Aggiungiamo "_user" al nome del database
-            db_name = f"{username}_user"
-
-            DBMan.connect(db_name)
-            password_hash = DBMan.fetch_data("SELECT password_hash FROM password")
-            password_hash = password_hash[0][0]
-
-            # Verifica se la password inserita corrisponde alla password memorizzata nel database
-            # In questo esempio, stiamo confrontando l'hash della password memorizzata con l'hash della password inserita
-
-            import hashlib
-            input_password_hash = hashlib.sha256(password.encode()).hexdigest()
-            #print(f'input_password_hash: {input_password_hash}, password_hash: {password_hash}')
-            if input_password_hash == password_hash:
-                CTkMessagebox(
-                    master= home_page,
-                    title="Login", 
-                    message="Login effettuato con successo!",
-                    icon="info"
-                    )
-                LOGGED_USER = username
-                LOGGED_USER_DB = db_name
-
-                switch_page(home_page)
-                carica_temp()
-                LOAD_TEMP = False
-                print("LOAD_TEMP: " + str(LOAD_TEMP))
-            else:
-                CTkMessagebox(
-                    master= login_page,
-                    title="Errore di login", 
-                    message="Credenziali non valide. Riprova!",
-                    icon="info"
-                    )
-
-        except psycopg2.Error as e:
-            CTkMessagebox(
-                master= login_page,
-                title="Errore di login", 
-                message=f"Errore durante la connessione al database: {e}",
-                icon="info"
-                )
-
-        finally:
-            if DBMan:
-                DBMan.disconnect()
-
-    def accedi(username, password):
-        
-        defaul_user = "Seleziona un utente"
-        print("Username:", username)
-        print("Password:", password)
-        if(username == defaul_user or password == ""):
-            error_type = ''
-            error_user = "devi selezionare l'username"
-            error_pass = "devi inserire la password"
-            error_user_pass = error_user + " e " + error_pass + "!"
-            if(username == defaul_user and password != ""):
-                error_type = error_user
-            if(password == "" and username != defaul_user):
-                error_type = error_pass
-            if(password == "" and username == defaul_user):
-                error_type = error_user_pass
-
-            CTkMessagebox(
-                master= login_page,
-                title="Errore",
-                message="Errore " + error_type,
-                icon="warning"
-                )
-            return
-        
-        perform_login(username, password)
-
-    if users_list == ["Errore1", "Errore2", "Errore3"]:
-        users_list = get_user_databases()
-
-    #LOGIN FRAME
-    LOGIN_FRAME_WIDTH = 190 + 20
-    LOGIN_FRAME_HEIGHT = 263 + 20
-
-    frame_login = ctk.CTkFrame(
-        master=login_page#,
-        #width=_map_frame_x(LOGIN_FRAME_WIDTH),
-        #height=_map_frame_y(LOGIN_FRAME_HEIGHT)
-        )
-
-    user_menu_label = ctk.CTkLabel(
-        master=frame_login,
-        bg_color=['gray92', 'gray14'], 
-        text="Seleziona utente"
-        )
-
-
-    menu_tendina_utenti = ctk.CTkOptionMenu(
-        master=frame_login,
-        values=[],
-        bg_color=['gray86', 'gray17'],
-        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-        dropdown_font = ctk.CTkFont(
-            'Roboto',
-            size=16),
-        hover=False)
-
-    passwd_login_entry = ctk.CTkEntry(
-        master=frame_login, 
-        width= 140 + 10,
-        height= 28 + 10,
-        bg_color=['gray92', 'gray14']
-        )
-    passwd_login_entry.configure(show='*')
-
-    passwd_label = ctk.CTkLabel(
-        master=frame_login,
-        bg_color=['gray92', 'gray14'],
-        text="Password")
-
-    login_button = ctk.CTkButton(
-        master=frame_login, 
-        bg_color=['gray92', 'gray14'], 
-        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-        text="Accedi")
-    
-    numpad_login = CTkPopupKeyboard.PopupNumpad(
-        attach= passwd_login_entry,
-        keycolor= 'dodgerblue2',
-        keywidth= KEYWIDTH,
-        keyheight= KEYHEIGHT
-        )
-
-    #menu_tendina_utenti.
-    menu_tendina_utenti.configure(values=users_list)
-
-    # Imposta il testo predefinito
-    default_text = "Seleziona un utente"  # Puoi cambiare questo testo se necessario
-    menu_tendina_utenti.set(default_text)
-
-    # Collega la funzione al pulsante "Accedi"
-    login_button.configure(command=lambda: accedi(menu_tendina_utenti.get(), passwd_login_entry.get()))
-
-    back_login_button = ctk.CTkButton(
-        master=frame_login,
-        bg_color=['gray92','gray14'],
-        command=lambda: switch_page(home_page),
-        width=_map_item_x(140 + 10, LOGIN_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, LOGIN_FRAME_HEIGHT),
-        text="Indietro")
-
-    user_menu_label.grid(    row= 0,padx= 10,   pady= 10)
-    menu_tendina_utenti.grid(row= 1,padx= 10,   pady= 10)
-    passwd_login_entry.grid( row= 2,padx= 10,   pady= 10)
-    passwd_label.grid(       row= 3,padx= 10,   pady= 10)
-    login_button.grid(       row= 4,padx= 10,   pady= 10)
-    back_login_button.grid(  row= 5,padx= 10,   pady= 10)
-
-    if frame_login.winfo_exists():
-        frame_login.place(relx=0.50, rely=0.1, anchor='n')
-        # Ottieni le coordinate del frame login rispetto alla finestra principale
-        frame_login_x = frame_login.winfo_rootx()
-        frame_login_y = frame_login.winfo_rooty()
-
-        # Ottieni le dimensioni del frame login
-        frame_login_width = frame_login.winfo_width()
-        frame_login_height = frame_login.winfo_height()
-
-        # Calcola le coordinate per posizionare il numpad accanto al frame login
-        numpad_x = frame_login_x + frame_login_width + 10  # Aggiungi 10 pixel di padding
-        numpad_y = frame_login_y
-
-    menu_tendina_utenti.configure(values=users_list)
-    switch_page(login_page)
+#switch_login_page()
 
 #FRAME LOGIN SETTINGS
 LOG_SET_FRAME_WIDTH = 106# + 20
 LOG_SET_FRAME_HEIGHT = 40# + 20
 frame_log_setting = ctk.CTkFrame(
     master=home_page, 
-    width=_map_frame_x(LOG_SET_FRAME_WIDTH), 
-    height=_map_frame_y(LOG_SET_FRAME_HEIGHT)
+    width=mapper._map_frame_x(LOG_SET_FRAME_WIDTH), 
+    height=mapper._map_frame_y(LOG_SET_FRAME_HEIGHT)
     )
+
+def set_logged_user():
+
+    switch_page_for_login(switch_page, home_page, login_page, users_list, mapper, get_user_databases, DBMan, carica_temp, var.KEYWIDTH, var.KEYHEIGHT)#, var.LOGGED_USER, var.LOGGED_USER)
+    print(f"MAIN: Utente loggato: {var.LOGGED_USER}")
+    if var.LOGGED_USER != '':
+        update_db_user_state()
 
 login_button = ctk.CTkButton(
     master=frame_log_setting,
     bg_color=[
         'gray86',
         'gray17'],
-    width=_map_item_x(50 + 5, LOG_SET_FRAME_WIDTH),
-    height=_map_item_y(30 + 5, LOG_SET_FRAME_HEIGHT),
+    width=mapper._map_item_x(55, LOG_SET_FRAME_WIDTH),
+    height=mapper._map_item_y(35, LOG_SET_FRAME_HEIGHT),
     text="Login",
-    command=lambda: switch_page_for_login()
+    command=lambda: set_logged_user()
     )
+
+def set_new_user(pages_list, signup_page):
+    switch_page_for_signup(switch_page, signup_page, home_page, DBMan, get_pdf_files_in_directory, menu_tendina_disegni, check_db_connection, mapper)
 
 setting_button = ctk.CTkButton(
     master=frame_log_setting,
-    bg_color=[
-        'gray86',
-        'gray17'],
+    bg_color=['gray86','gray17'],
     compound="left",
-    width=_map_item_x(36 + 5, LOG_SET_FRAME_WIDTH),
-    height=_map_item_y(30 + 5, LOG_SET_FRAME_HEIGHT),
+    width=mapper._map_item_x(36 + 5, LOG_SET_FRAME_WIDTH),
+    height=mapper._map_item_y(30 + 5, LOG_SET_FRAME_HEIGHT),
     text="",
     image=ctk.CTkImage(
         Image.open(r'libs\gear_icon.png'),
         size=(20,20)),
-        command=lambda: switch_page(singup_page))
+        command=lambda: set_new_user(pages_list, signup_page))
 
 login_button.grid(row=0, column= 0, padx= 5, pady= 5)
 setting_button.grid(row=0, column= 1, padx= 5, pady= 5)
@@ -698,8 +348,8 @@ SETUP_TIME_FRAME_HEIGHT_AUTO = 150
 #GENERAZIONE FRAME
 frame_setup_time = ctk.CTkFrame(
     master=home_page,
-    width=_map_frame_x(SETUP_TIME_FRAME_WIDTH), 
-    height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT_MANUAL)
+    width=mapper._map_frame_x(SETUP_TIME_FRAME_WIDTH), 
+    height=mapper._map_frame_y(SETUP_TIME_FRAME_HEIGHT_MANUAL)
 )
 
 #GENERAZIONE LABEL
@@ -708,20 +358,20 @@ tempo_setup_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Tempo di setup (min)"
 )
-tempo_setup_label.place(x=_map_item_x(18, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(6, SETUP_TIME_FRAME_HEIGHT_MANUAL))
+tempo_setup_label.place(x=mapper._map_item_x(18, SETUP_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, SETUP_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_setup_num = CTkSpinbox(
     master=frame_setup_time, 
     bg_color=['gray86', 'gray17'],
     button_width=50,
-    width=_map_item_x(76, SETUP_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, SETUP_TIME_FRAME_HEIGHT_MANUAL), 
+    width=mapper._map_item_x(76, SETUP_TIME_FRAME_WIDTH), 
+    height=mapper._map_item_y(44, SETUP_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20'],
     command= lambda: machine_data.machines[MACCHINARIO].timers.set_start("setup", int(tempo_setup_num.get()))
 )
-tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
+tempo_setup_num.place(x=mapper._map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE CHECKBOX
 setup_time_checkbox = ctk.CTkCheckBox(
@@ -822,11 +472,11 @@ def update_elapsed_time_setup():
 
 def carica_temp():
     global LOAD_TEMP
-    global selected_start_datetime, tempo_setup_num, pezzi_select_num, tempo_taglio_num, tempo_fresatura_num, tempo_tornitura_num, tempo_elettro_num, menu_tendina_disegni, draw_num_entry, note_num_entry
+    global tempo_setup_num, pezzi_select_num, tempo_taglio_num, tempo_fresatura_num, tempo_tornitura_num, tempo_elettro_num, menu_tendina_disegni, draw_num_entry, note_num_entry
     default_temp = {"selected_start_datetime": None, "tempo_setup_num": 0, "pezzi_select_num": 0, "tempo_taglio_num": 0, "tempo_fresatura_num": 0, "tempo_tornitura_num": 0, "tempo_elettro_num": 0, "menu_tendina_disegni": "Sel. num. disegno", "draw_num_entry": "", "note_num_entry": ""}
     if LOAD_TEMP:
-        if LOGGED_USER != '':
-            file_name = f"{LOGGED_USER}_temp.json"
+        if var.LOGGED_USER != '':
+            file_name = f"{var.LOGGED_USER}_temp.json"
             try:
                 with open(file_name, 'r') as f:
                     data = json.load(f)
@@ -835,7 +485,7 @@ def carica_temp():
                 if(data == default_temp):
                     print("dati default trovati")
                     return
-                restore = ask_question_choice(f"Sono stati trovati dati precedentemente inseriti per l'utente {LOGGED_USER}, vuoi ripristinarli?")
+                restore = ask_question_choice(f"Sono stati trovati dati precedentemente inseriti per l'utente {var.LOGGED_USER}, vuoi ripristinarli?", home_page)
                 if not restore:
                     LOAD_TEMP = False
                     return
@@ -843,9 +493,7 @@ def carica_temp():
 
                 # Imposta le variabili globali con i valori dal file JSON
                 machine_data.machines[MACCHINARIO].dates.set_date("inizio", data["selected_start_datetime"])
-                #selected_start_datetime = data["selected_start_datetime"]
                 start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
-                #selected_start_datetime)
                 tempo_setup_num.configure(value= data["tempo_setup_num"])
                 pezzi_select_num.configure(value= data["pezzi_select_num"])
                 tempo_taglio_num.configure(value= data["tempo_taglio_num"])
@@ -853,8 +501,6 @@ def carica_temp():
                 tempo_tornitura_num.configure(value= data["tempo_tornitura_num"])
                 tempo_elettro_num.configure(value= data["tempo_elettro_num"])
                 menu_tendina_disegni.set(str(data["menu_tendina_disegni"]))
-                #draw_num_entry.configure(textvariable= str(data["draw_num_entry"])) qui c'è UN BUG
-                #note_num_entry.configure(textvariable= str(data["note_num_entry"]))
 
                 LOAD_TEMP = False
 
@@ -868,7 +514,7 @@ previous_data = {}
 
 def salva_temp():
     global LOAD_TEMP
-    global selected_start_datetime, previous_data
+    global previous_data
 
     current_data_default = {
                 "selected_start_datetime": 'null',
@@ -884,7 +530,7 @@ def salva_temp():
             }
     
     #print(LOAD_TEMP)
-    if LOGGED_USER != '' and not LOAD_TEMP:
+    if var.LOGGED_USER != '' and not LOAD_TEMP:
         # Dati attuali
         try:
             current_data = {
@@ -904,7 +550,7 @@ def salva_temp():
 
             # Confronta con i dati precedenti
             if current_data != previous_data:
-                file_name = f"{LOGGED_USER}_temp.json"  # Nome del file JSON con la variabile user
+                file_name = f"{var.LOGGED_USER}_temp.json"  # Nome del file JSON con la variabile user
                 with open(file_name, 'w') as f:
                     json.dump(current_data, f)
                 previous_data = current_data
@@ -932,7 +578,7 @@ def setup_toggle_buttons():
         setup_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("setup")) #timer_manager.get_elapsed_time(MACCHINARIO, 'setup')) #"{:d}:{:02d}".format(setup_minutes, setup_seconds))
         tempo_setup_label.configure(text="Tempo di setup")
         setup_minutes = tempo_setup_num.get()
-        #frame_setup_time.configure(height=_map_frame_y(SETUP_TIME_FRAME_HEIGHT_AUTO))
+        #frame_setup_time.configure(height=mapper._map_frame_y(SETUP_TIME_FRAME_HEIGHT_AUTO))
         #setup_start_time = time.time()
         update_elapsed_time_setup()  # Avvia l'aggiornamento del tempo trascorso
     else:
@@ -940,7 +586,7 @@ def setup_toggle_buttons():
         setup_button_stop.place_forget()
         setup_button_reset.place_forget()
         setup_time_elapsed_label.place_forget()
-        tempo_setup_num.place(x=_map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=_map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
+        tempo_setup_num.place(x=mapper._map_item_x(10, SETUP_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, SETUP_TIME_FRAME_HEIGHT_MANUAL))
         #setup_start_time = None
         tempo_setup_label.configure(text="Tempo di setup(min)")
         #setup_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
@@ -955,10 +601,8 @@ setup_toggle_buttons()
 from datetime import datetime
 
 def show_datetime_dialog():
-    global selected_start_datetime
 
     def save_datetime():
-        global selected_start_datetime
         selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
         selected_hour = int(hour_spinbox.get())
         selected_minute = int(minute_spinbox.get())
@@ -1004,16 +648,14 @@ def show_datetime_dialog():
     dialog.wait_window()
 
 def set_start_time(MODE):
-    global selected_start_datetime
     if MODE == 'current_date':
         #selected_start_datetime = time.strftime('%Y-%m-%d %H:%M:%S')
         machine_data.machines[MACCHINARIO].dates.set_date("inizio", time.strftime('%Y-%m-%d %H:%M:%S'))
         start_time_time_elapsed_label.configure(text= machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
-        #selected_start_datetime)
         print(f"Data e ora d'inizio del {MACCHINARIO}: {machine_data.machines[MACCHINARIO].dates.get_date("inizio")}")
     elif MODE == 'set_date':
         show_datetime_dialog()
-        print(machine_data.machines[MACCHINARIO].dates.get_date("inizio"))#selected_start_datetime)
+        print(machine_data.machines[MACCHINARIO].dates.get_date("inizio"))
 
 #FRAME START TIME
 START_TIME_FRAME_WIDTH = 210
@@ -1022,8 +664,8 @@ START_TIME_FRAME_HEIGHT = 100
 #GENERAZIONE FRAME
 frame_start_time = ctk.CTkFrame(
     master=home_page,
-    width=_map_frame_x(START_TIME_FRAME_WIDTH), 
-    height=_map_frame_y(START_TIME_FRAME_HEIGHT)
+    width=mapper._map_frame_x(START_TIME_FRAME_WIDTH), 
+    height=mapper._map_frame_y(START_TIME_FRAME_HEIGHT)
 )
 
 #GENERAZIONE LABEL
@@ -1060,7 +702,7 @@ start_time_time_elapsed_label = ctk.CTkLabel(
     text= 'Da impostare'
 )
 
-tempo_start_time_label.grid(        row= 0, column= 0, padx= 5, pady= 0, columnspan= 2)#place(x=_map_item_x(18, START_TIME_FRAME_WIDTH), y=_map_item_y(6, START_TIME_FRAME_HEIGHT))
+tempo_start_time_label.grid(        row= 0, column= 0, padx= 5, pady= 0, columnspan= 2)#place(x=mapper._map_item_x(18, START_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, START_TIME_FRAME_HEIGHT))
 start_time_time_elapsed_label.grid( row= 2, column= 0, padx= 5, pady= 0, columnspan= 2)#place(relx=0.1, rely=0.3)
 start_time_button_inizia_ora.grid(  row= 3, column= 0, padx= 5, pady= 5)#place(relx=0.1, rely=RELY_TIMER_BUTTONS)
 start_time_button_imposta.grid(     row= 3, column= 1, padx= 5, pady= 5)#place(relx=0.5, rely=RELY_TIMER_BUTTONS)
@@ -1099,8 +741,8 @@ time_taglio_timer_current_button = None
 #GENERAZIONE FRAME
 frame_taglio_time = ctk.CTkFrame(
     master=frame_container_time,
-    width=TAGLIO_TIME_FRAME_WIDTH,#_map_frame_x(TAGLIO_TIME_FRAME_WIDTH),
-    height=TAGLIO_TIME_FRAME_HEIGHT_MANUAL#_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT)
+    width=TAGLIO_TIME_FRAME_WIDTH,#mapper._map_frame_x(TAGLIO_TIME_FRAME_WIDTH),
+    height=TAGLIO_TIME_FRAME_HEIGHT_MANUAL#mapper._map_frame_y(TAGLIO_TIME_FRAME_HEIGHT)
     )
 
 #GENERAZIONE LABEL
@@ -1115,8 +757,8 @@ tempo_taglio_num = CTkSpinbox(
     master=frame_taglio_time, 
     bg_color=['gray86', 'gray17'],
     button_width=50,
-    width=_map_item_x(76, TAGLIO_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, TAGLIO_TIME_FRAME_HEIGHT_MANUAL), 
+    width=mapper._map_item_x(76, TAGLIO_TIME_FRAME_WIDTH), 
+    height=mapper._map_item_y(44, TAGLIO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20'],
     command= lambda: machine_data.machines[MACCHINARIO].timers.set_start("taglio", int(tempo_taglio_num.get()))
@@ -1130,9 +772,9 @@ taglio_time_checkbox = ctk.CTkCheckBox(
 )
 
 # Posizionare il checkbox all'interno del frame_container_time
-taglio_time_label.place(x=_map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+taglio_time_label.place(x=mapper._map_item_x(18, TAGLIO_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 taglio_time_checkbox.place(relx=0.65, rely=0.1)
-tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+tempo_taglio_num.place(x=mapper._map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
 
 #grid(   row= 0, column= 0,                padx=5, pady= 5 )#
 #grid(row= 0, column= 1,                padx=5, pady= 5 )#place(
@@ -1176,13 +818,11 @@ taglio_time_elapsed_label.place(relx=0.1, rely=0.6)
 
 taglio_start_time = None
 
-#timer_manager.add_timer(MACCHINARIO,"taglio")
 machine_data.machines[MACCHINARIO].timers.set_attach_buttons("taglio", [taglio_button_inizio, taglio_button_stop, taglio_button_reset])
-#timer_manager.set_attach_buttons(MACCHINARIO,"taglio", [taglio_button_inizio, taglio_button_stop, taglio_button_reset])
 
 # Funzione per aggiornare il tempo trascorso
 def update_elapsed_time_taglio():
-    taglio_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio")#timer_manager.get_elapsed_time(MACCHINARIO, 'taglio')
+    taglio_elapsed_time = machine_data.machines[MACCHINARIO].timers.get_elapsed_time("taglio")
     #print(f"taglio_elapsed_time: {taglio_elapsed_time}")
     taglio_time_elapsed_label.configure(text=taglio_elapsed_time)
 
@@ -1210,7 +850,7 @@ def taglio_toggle_buttons():
         taglio_time_elapsed_label.place(relx=ELAPSED_TIME_LABEL_X, rely=ELAPSED_TIME_LABEL_Y)
         taglio_time_elapsed_label.configure(text="{:d}:{:02d}".format(taglio_minutes, taglio_seconds))
         taglio_time_label.configure(text="Tempo di taglio")
-        #frame_container_time.configure(height=_map_frame_y(TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+        #frame_container_time.configure(height=mapper._map_frame_y(TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
         #taglio_start_time = time.time()
         update_elapsed_time_taglio()  # Avvia l'aggiornamento del tempo trascorso
     else:
@@ -1218,7 +858,7 @@ def taglio_toggle_buttons():
         taglio_button_stop.place_forget()
         taglio_button_reset.place_forget()
         taglio_time_elapsed_label.place_forget()
-        tempo_taglio_num.place(x=_map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=_map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
+        tempo_taglio_num.place(x=mapper._map_item_x(10, TAGLIO_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, TAGLIO_TIME_FRAME_HEIGHT_MANUAL))
         #taglio_start_time = None
         taglio_time_label.configure(text="Tempo di taglio(min)")
         #taglio_time_elapsed_label.configure(text="0:00")  # Resetta il tempo trascorso
@@ -1256,20 +896,20 @@ tornitura_time_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Tempo di tornitura (min)"
 )
-tornitura_time_label.place(x=_map_item_x(18, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(6, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
+tornitura_time_label.place(x=mapper._map_item_x(18, TORNITURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_tornitura_num = CTkSpinbox(
     master=frame_tornitura_time, 
     bg_color=['gray86', 'gray17'],
     button_width=50,
-    width=_map_item_x(76, TORNITURA_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, TORNITURA_TIME_FRAME_HEIGHT_MANUAL), 
+    width=mapper._map_item_x(76, TORNITURA_TIME_FRAME_WIDTH), 
+    height=mapper._map_item_y(44, TORNITURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20'],
     command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("tornitura", int(tempo_tornitura_num.get()))
 )
-tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
+tempo_tornitura_num.place(x=mapper._map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE CHECKBOX
 tornitura_time_checkbox = ctk.CTkCheckBox(
@@ -1359,7 +999,7 @@ def tornitura_toggle_buttons():
         tornitura_button_stop.place_forget()
         tornitura_button_reset.place_forget()
         tornitura_time_elapsed_label.place_forget()
-        tempo_tornitura_num.place(x=_map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=_map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
+        tempo_tornitura_num.place(x=mapper._map_item_x(10, TORNITURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, TORNITURA_TIME_FRAME_HEIGHT_MANUAL))
         tornitura_time_label.configure(text="Tempo di tornitura(min)")
         tempo_tornitura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("tornitura").split(":")[0])
         #timer_manager.get_elapsed_time(MACCHINARIO, 'tornitura').split(":")[0])
@@ -1396,20 +1036,20 @@ fresatura_time_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Tempo di fresatura (min)"
 )
-fresatura_time_label.place(x=_map_item_x(18, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(6, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
+fresatura_time_label.place(x=mapper._map_item_x(18, FRESATURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_fresatura_num = CTkSpinbox(
     master=frame_fresatura_time, 
     bg_color=['gray86', 'gray17'],
     button_width=50,
-    width=_map_item_x(76, FRESATURA_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, FRESATURA_TIME_FRAME_HEIGHT_MANUAL), 
+    width=mapper._map_item_x(76, FRESATURA_TIME_FRAME_WIDTH), 
+    height=mapper._map_item_y(44, FRESATURA_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20'],
    command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("fresatura", int(tempo_fresatura_num.get()))
 )
-tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
+tempo_fresatura_num.place(x=mapper._map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE CHECKBOX
 fresatura_time_checkbox = ctk.CTkCheckBox(
@@ -1500,7 +1140,7 @@ def fresatura_toggle_buttons():
         fresatura_button_stop.place_forget()
         fresatura_button_reset.place_forget()
         fresatura_time_elapsed_label.place_forget()
-        tempo_fresatura_num.place(x=_map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=_map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
+        tempo_fresatura_num.place(x=mapper._map_item_x(10, FRESATURA_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, FRESATURA_TIME_FRAME_HEIGHT_MANUAL))
         fresatura_time_label.configure(text="Tempo di fresatura(min)")
         tempo_fresatura_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("fresatura").split(":")[0])
         #timer_manager.get_elapsed_time(MACCHINARIO, 'fresatura').split(":")[0])
@@ -1537,20 +1177,20 @@ elettro_time_label = ctk.CTkLabel(
     bg_color=['gray86', 'gray17'], 
     text="Tempo di elettroerosione (min)"
 )
-elettro_time_label.place(x=_map_item_x(18, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(6, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
+elettro_time_label.place(x=mapper._map_item_x(18, ELETTRO_TIME_FRAME_WIDTH), y=mapper._map_item_y(6, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE SELEZIONA NUMERO
 tempo_elettro_num = CTkSpinbox(
     master=frame_elettro_time, 
     bg_color=['gray86', 'gray17'],
     button_width=50,
-    width=_map_item_x(76, ELETTRO_TIME_FRAME_WIDTH), 
-    height=_map_item_y(44, ELETTRO_TIME_FRAME_HEIGHT_MANUAL), 
+    width=mapper._map_item_x(76, ELETTRO_TIME_FRAME_WIDTH), 
+    height=mapper._map_item_y(44, ELETTRO_TIME_FRAME_HEIGHT_MANUAL), 
     value=0, 
     fg_color=['gray81', 'gray20'],
     command=lambda: machine_data.machines[MACCHINARIO].timers.set_start("elettro", int(tempo_elettro_num.get()))
 )
-tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
+tempo_elettro_num.place(x=mapper._map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
 
 #GENERAZIONE CHECKBOX
 elettro_time_checkbox = ctk.CTkCheckBox(
@@ -1635,7 +1275,7 @@ def elettro_toggle_buttons():
         elettro_button_stop.place_forget()
         elettro_button_reset.place_forget()
         elettro_time_elapsed_label.place_forget()
-        tempo_elettro_num.place(x=_map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=_map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
+        tempo_elettro_num.place(x=mapper._map_item_x(10, ELETTRO_TIME_FRAME_WIDTH), y=mapper._map_item_y(43, ELETTRO_TIME_FRAME_HEIGHT_MANUAL))
         elettro_time_label.configure(text="Tempo di elettroerosione(min)")
         tempo_elettro_num.configure(value= machine_data.machines[MACCHINARIO].timers.get_elapsed_time("elettro").split(":")[0])
         #timer_manager.get_elapsed_time(MACCHINARIO, "elettro").split(":")[0])
@@ -1650,23 +1290,24 @@ elettro_toggle_buttons()
 #PEZZI FRAME
 N_PEZZI_FRAME_WIDTH = 210
 N_PEZZI_FRAME_HEIGHT = 100
+
 frame_n_pezzi = ctk.CTkFrame(
     master=home_page, 
-    width=_map_frame_x(N_PEZZI_FRAME_WIDTH), 
-    height=_map_frame_y(N_PEZZI_FRAME_HEIGHT)
+    width=mapper._map_frame_x(N_PEZZI_FRAME_WIDTH), 
+    height=mapper._map_frame_y(N_PEZZI_FRAME_HEIGHT)
     )
 
 pezzi_select_num = CTkSpinbox(
     master=frame_n_pezzi, bg_color=[
         'gray86', 'gray17'], 
         button_width = 50,
-        width=_map_item_x(76, N_PEZZI_FRAME_WIDTH),
-        height=_map_item_y(44, N_PEZZI_FRAME_HEIGHT),
+        width=mapper._map_item_x(76, N_PEZZI_FRAME_WIDTH),
+        height=mapper._map_item_y(44, N_PEZZI_FRAME_HEIGHT),
         value=0, 
         fg_color=['gray81', 'gray20'],
         command= lambda: machine_data.machines[MACCHINARIO].prod_data.set_prod_data("pezzi", int(pezzi_select_num.get()))
         )
-pezzi_select_num.place(x=_map_item_x(11, N_PEZZI_FRAME_WIDTH), y=_map_item_y(44, N_PEZZI_FRAME_HEIGHT))
+pezzi_select_num.place(x=mapper._map_item_x(11, N_PEZZI_FRAME_WIDTH), y=mapper._map_item_y(44, N_PEZZI_FRAME_HEIGHT))
 
 def open_pdf():
     selected_menu_tendina = menu_tendina_disegni.get()
@@ -1696,8 +1337,8 @@ N_DRAW_FRAME_HEIGHT = 90
 
 frame_draw_commessa = ctk.CTkFrame(
     master=home_page,
-    width=_map_frame_x(N_DRAW_FRAME_WIDTH), 
-    height=_map_frame_y(N_DRAW_FRAME_HEIGHT)
+    width=mapper._map_frame_x(N_DRAW_FRAME_WIDTH), 
+    height=mapper._map_frame_y(N_DRAW_FRAME_HEIGHT)
     )
 
 frame_n_draw = ctk.CTkFrame(master=frame_draw_commessa)
@@ -1814,116 +1455,24 @@ else:
 LAVORAZIONE_FRAME_WIDTH = 400
 LAVORAZIONE_FRAME_HEIGHT = 40
 frame_lavorazione = ctk.CTkFrame(master=home_page, 
-                                           width=_map_frame_x(LAVORAZIONE_FRAME_WIDTH), 
-                                           height=_map_frame_y(LAVORAZIONE_FRAME_HEIGHT)
+                                           width=mapper._map_frame_x(LAVORAZIONE_FRAME_WIDTH), 
+                                           height=mapper._map_frame_y(LAVORAZIONE_FRAME_HEIGHT)
                                            )
 #frame_lavorazione.place(x=191, y=73)
 
 tornitura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="tornitura")
-tornitura_checkbox.place(x=_map_item_x(115, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
+tornitura_checkbox.place(x=mapper._map_item_x(115, LAVORAZIONE_FRAME_WIDTH), y=mapper._map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
 fresatura_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="fresatura")
-fresatura_checkbox.place(x=_map_item_x(220, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
+fresatura_checkbox.place(x=mapper._map_item_x(220, LAVORAZIONE_FRAME_WIDTH), y=mapper._map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
 elettro_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray92', 'gray14'], width=72, text="elettro")
-elettro_checkbox.place(x=_map_item_x(320, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
+elettro_checkbox.place(x=mapper._map_item_x(320, LAVORAZIONE_FRAME_WIDTH), y=mapper._map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
 taglio_checkbox = ctk.CTkCheckBox(master=frame_lavorazione, bg_color=['gray86', 'gray17'], text="taglio")
-taglio_checkbox.place(x=_map_item_x(13, LAVORAZIONE_FRAME_WIDTH), y=_map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
+taglio_checkbox.place(x=mapper._map_item_x(13, LAVORAZIONE_FRAME_WIDTH), y=mapper._map_item_y(8, LAVORAZIONE_FRAME_HEIGHT))
 
-def show_popup_singup():
-    # Disable/Enable popup
-    if switch_singup.get() == 1:
-        numpad_singup_password.disable = False
-        numpad_singup_repeat_password.disable = False
-        
-    else:
-        numpad_singup_password.disable = True
-        numpad_singup_repeat_password.disable = True
-
-def create_database(username):
-    try:
-        # Connessione al database principale
-        DBMan.connect()
-
-        # Verifica se il database esiste già
-        existing_databases = DBMan.fetch_data("SELECT datname FROM pg_catalog.pg_database WHERE datname = %s", (f"{username}_user",))
-        if not existing_databases:
-            # Il database non esiste, quindi lo creiamo
-            new_db_name = f"{username}_user"
-            DBMan.execute_query(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(new_db_name)), commit=True)
-            print(f"Database '{new_db_name}' creato con successo.")
-        else:
-            new_db_name = existing_databases[0][0]
-
-        # Disconnettiamo dal database principale
-        DBMan.disconnect()
-
-        return new_db_name
-    except Exception as e:
-        print(f"Errore durante la creazione del database per '{username}': {e}")
-        return None
-
-
-def perform_registration():
-
-    username = user_singup_entry.get()
-    password = passwd_singup_entry.get()
-    confirm_password = passwd_repeat_singup_entry.get()
-    #print(username + ", " + password + ", " + confirm_password)
-
-    if password != confirm_password:
-        CTkMessagebox(
-            master= login_page,
-            title="Errore di registrazione", 
-            message="Le password non corrispondono!",
-            icon="warning"
-            )
-        return False
-    
-    try:
-        # Connessione al database PostgreSQL
-        DBMan.connect(LOGGED_USER_DB)  # Connessione al database principale
-
-        # Verifica se il database esiste già
-        new_db_name = create_database(username)
-        print("new_db_name: " + new_db_name)
-        
-        # Connessione al nuovo database creato
-        DBMan.disconnect()  # Disconnetti dal database principale
-        DBMan.connect(new_db_name)  # Connessione al nuovo database creato
-
-        # Creazione della tabella per memorizzare la password
-        DBMan.execute_query("""
-            CREATE TABLE password (
-                id SERIAL PRIMARY KEY,
-                password_hash TEXT
-            )
-        """)
-
-        # Inserimento della password nella tabella
-        # Qui puoi usare un metodo di hash per crittografare la password prima di memorizzarla
-        # Ad esempio, usando bcrypt o hashlib
-        # Ecco un esempio di utilizzo di hashlib per ottenere un hash della password
-        import hashlib
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        DBMan.execute_query("INSERT INTO password (password_hash) VALUES (%s)", (password_hash,))
-
-        # Applica le modifiche
-        DBMan.disconnect()  # Disconnetti dal nuovo database creato
-
-        switch_page(home_page)
-        return True
-
-    except Exception as e:
-        #messagebox.showerror("Errore di registrazione", f"Errore durante l'inserimento dell'utente nel database: {e}")
-        CTkMessagebox(
-            master= singup_page,
-            title="Errore di registrazione", 
-            message=f"Errore durante l'inserimento dell'utente nel database: {e}",
-            icon="warning"
-            )
-        return False
+#PERFORM REGISTRATION
 
             
 progressbar = ctk.CTkProgressBar(master=home_page)
@@ -1936,16 +1485,16 @@ def check_db_connection():
         if DBMan.test_connection():
             DB_STATE = "Connesso"
             update_db_user_state()
+            #print("Connessione riuscita")
             return True  # Restituisci True se la connessione è riuscita
         else:
             DB_STATE = 'Errore di connessione'
+            #print("Errore di connessione")
             update_db_user_state()
             return False  # Restituisci False se c'è stato un errore di connessione
 
 # Chiamata alla funzione per verificare la connessione al database all'avvio
 check_db_connection()
-
-#selected_checkboxes = []  # Lista per tenere traccia dei checkbox selezionati
 
 def update_selected_checkbox(checkbox):
     selected_checkboxes = machine_data.machines[MACCHINARIO].prod_data.get_selected_checkboxes()
@@ -1964,462 +1513,7 @@ def update_selected_text():
     
     selected_checkbox_text = ', '.join([checkbox.cget('text') for checkbox in selected_checkboxes])
 
-def ask_question_db_conf(host, port, user, passwd):
-    # Formattazione dei dati come una tabella
-    tabella = (
-        f"{'HOST:':<20}{host}\n"
-        f"{'PORT:':<20}{port}\n"
-        f"{'USER:':<20}{user}\n"
-        f"{'PASSWORD:':<20}{passwd}"
-    )
-
-    # Creazione del messaggio di messagebox
-    msg = CTkMessagebox(
-        master= singup_page,
-        title="Conferma impostazioni Postgres", 
-        message=f"Impostazioni:\n\n{tabella}\nIl test della connessione ha dato esito positivo\nConferma per salvare?",
-        width=500,
-        icon="question", 
-        option_1="Conferma", 
-        option_2="Modifica" 
-    )
-
-    # Ottieni la risposta dal messagebox
-    response = msg.get()
-    
-    if response=="Conferma":
-        return True
-    elif response=="Modifica":
-        return False
-
-def save_db_conf(host, port, user, passwd, dialog):
-
-    db_config = {
-        'host': host,
-        'port': port,
-        'user': user,
-        'password': passwd
-    }
-
-    if check_db_connection(db_config):
-        if(ask_question_db_conf(host, port, user, passwd)):
-            save_config('pg_host', host)
-            save_config('pg_port', port)
-            save_config('pg_user', user)
-            save_config('pg_passwd', passwd)
-            dialog.destroy()
-
-def show_update_config_dialog():
-    def choose_directory():
-        directory_path = filedialog.askdirectory()
-        if directory_path:
-            directory_update_entry.delete(0, "end")  # Pulisce l'entry widget
-            directory_update_entry.insert(0, directory_path)  # Inserisce il percorso selezionato nell'entry widget
-
-    def save_directory():
-        chosen_directory = directory_update_entry.get()
-        if chosen_directory:
-            save_config("update_directory", chosen_directory)
-            dialog.destroy()
-
-    dialog = ctk.CTkToplevel()
-    dialog.title("Configurazione Directory Aggiornamenti")
-
-    directory_update_label = ctk.CTkLabel(dialog, text="Directory:")
-    directory_update_label.grid(row=0, column=0, padx=5, pady=5)
-
-    directory_update_entry = ctk.CTkEntry(dialog, width=250)
-    directory_update_entry.grid(row=0, column=1, padx=5, pady=5)
-
-    choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
-    choose_button.grid(row=0, column=2, padx=5, pady=5)
-
-    save_button = ctk.CTkButton(dialog, text="Salva", command=save_directory)
-    save_button.grid(row=2, column=1, padx=5, pady=5)
-
-    dialog.lift()
-
-    dialog.focus_set()  
-    dialog.grab_set()   
-    dialog.wait_window()
-
-def apply_update_dialog(exe_directory):
-    # Verifica che la directory esista
-    if os.path.isdir(exe_directory):
-        # Trova il percorso del file .exe nella directory
-        exe_file = None
-        for file_name in os.listdir(exe_directory):
-            if file_name.endswith('.exe'):
-                exe_file = os.path.join(exe_directory, file_name)
-                break
-        
-        # Se trova un file .exe, copialo nella stessa directory dell'eseguibile Python
-        if exe_file:
-            python_executable_dir = os.path.dirname(sys.executable)
-            try:
-                shutil.copy2(exe_file, python_executable_dir)
-                print("File .exe copiato con successo.")
-            except shutil.SameFileError:
-                print("Il file .exe è già presente nella directory dell'eseguibile.")
-            except PermissionError:
-                print("Non hai i permessi per copiare il file .exe.")
-            except Exception as e:
-                print(f"Si è verificato un errore durante la copia del file .exe: {e}")
-        else:
-            print("Nessun file .exe trovato nella directory indicata.")
-    else:
-        print("La directory indicata non esiste.")
-
-def show_draw_config_dialog():
-    def choose_directory():
-        directory_path = filedialog.askdirectory()
-        if directory_path:
-            directory_entry.delete(0, "end")  # Pulisce l'entry widget
-            directory_entry.insert(0, directory_path)  # Inserisce il percorso selezionato nell'entry widget
-
-    def save_directory():
-        global pdf_file_list
-        chosen_directory = directory_entry.get()
-        if chosen_directory:
-            save_config("draw_directory", chosen_directory)
-            pdf_file_list = get_pdf_files_in_directory(chosen_directory)
-            menu_tendina_disegni.configure(values=pdf_file_list)
-            dialog.destroy()  # Chiude la finestra di dialogo dopo aver salvato il percorso
-
-    def toggle_auto_scan(checkbox):
-        if checkbox:
-            save_config("draw_auto_scan", True)
-        else:
-            save_config("draw_auto_scan", False)
-
-    dialog = ctk.CTkToplevel()
-    dialog.title("Configurazione Directory Disegni")
-
-    directory_label = ctk.CTkLabel(dialog, text="Directory:")
-    directory_label.grid(row=0, column=0, padx=5, pady=5)
-
-    directory_entry = ctk.CTkEntry(dialog, width=250)
-    directory_entry.insert(0, load_config("draw_directory") or '')
-    directory_entry.grid(row=0, column=1, padx=5, pady=5)
-
-    choose_button = ctk.CTkButton(dialog, text="Scegli Directory", command=choose_directory)
-    choose_button.grid(row=0, column=2, padx=5, pady=5)
-
-    save_button = ctk.CTkButton(dialog, text="Salva", command=save_directory)
-    save_button.grid(row=2, column=1, padx=5, pady=5)
-
-    dialog.lift()  # Solleva la finestra di dialogo in primo piano
-
-    dialog.focus_set()  # Imposta il focus sulla finestra di dialogo
-    dialog.grab_set()   # Blocca l'input alle altre finestre
-    dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
-
-def show_db_config_dialog():
-    dialog = ctk.CTkToplevel()
-    dialog.title("Configurazione Server PostgreSQL")
-    dialog.geometry("400x300")
-    dialog.resizable(False, False)
-
-    host_label = ctk.CTkLabel(dialog, text="Host:")
-    host_label.pack()
-    host_entry = ctk.CTkEntry(dialog)
-    host_entry.pack()
-
-    port_label = ctk.CTkLabel(dialog, text="Porta:")
-    port_label.pack()
-    port_entry = ctk.CTkEntry(dialog)
-    port_entry.pack()
-
-    user_label = ctk.CTkLabel(dialog, text="Utente:")
-    user_label.pack()
-    user_entry = ctk.CTkEntry(dialog)
-    user_entry.pack()
-
-    password_label = ctk.CTkLabel(dialog, text="Password:")
-    password_label.pack()
-    password_entry = ctk.CTkEntry(dialog, show="*")
-    password_entry.pack()
-
-    # Carica le impostazioni dal file di configurazione (se esiste)
-    host_entry.insert(0, load_config('pg_host') or '')
-    port_entry.insert(0, load_config('pg_port') or '')
-    user_entry.insert(0, load_config('pg_user') or '')
-    password_entry.insert(0, load_config('pg_passwd') or '')
-
-    save_button = ctk.CTkButton(
-        dialog, 
-        text="Test impostazioni", 
-        command=lambda: save_db_conf(host_entry.get(), port_entry.get(), user_entry.get(), password_entry.get(), dialog)
-        )
-    save_button.pack()
-
-    dialog.focus_set()  # Imposta il focus sulla finestra di dialogo
-    dialog.grab_set()   # Blocca l'input alle altre finestre
-    dialog.wait_window()  # Attendi che la finestra di dialogo venga chiusa
-
-
-'''
-def checkbox_clicked(checkbox):
-    update_selected_checkbox(checkbox)
-    update_selected_text()
-    #print("selected_checkbox_text: " + str(type(selected_checkbox_text)))  # Stampa il testo dei checkbox selezionati
-
-# Collegamento della funzione di gestione dei click ai comandi di selezione/deselezione dei checkbox
-tornitura_checkbox.configure(command=lambda: checkbox_clicked(tornitura_checkbox))
-fresatura_checkbox.configure(command=lambda: checkbox_clicked(fresatura_checkbox))
-elettro_checkbox.configure(command=lambda: checkbox_clicked(elettro_checkbox))
-taglio_checkbox.configure(command=lambda: checkbox_clicked(taglio_checkbox))
-'''
-
-#SING-UP FRAME
-SINGUP_FRAME_WIDTH = 190 + 15
-SINGUP_FRAME_HEIGHT = 263 + 40
-
-# Creazione del frame di registrazione
-frame_singup = ctk.CTkFrame(
-    master=singup_page, 
-    width=_map_frame_x(SINGUP_FRAME_WIDTH), 
-    height=_map_frame_y(SINGUP_FRAME_HEIGHT) 
-)
-
-# Label per il titolo "Registrazione"
-registration_title_label = ctk.CTkLabel(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'], 
-    text="Registrazione",
-    font=("Helvetica", 16, "bold")  # Opzionale: cambia il font per enfatizzare il titolo
-)
-registration_title_label.place(x=_map_item_x(50, SINGUP_FRAME_WIDTH), y=_map_item_y(2, SINGUP_FRAME_HEIGHT))
-
-# Label e Entry per l'username
-user_label_singup = ctk.CTkLabel(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'], 
-    text="Username"
-)
-user_label_singup.place(x=_map_item_x(60, SINGUP_FRAME_WIDTH), y=_map_item_y(30, SINGUP_FRAME_HEIGHT))
-
-user_singup_entry = ctk.CTkEntry(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'],
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT)
-)
-print("user_singup_entry: " + str(user_singup_entry))
-user_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(50, SINGUP_FRAME_HEIGHT))
-
-# Label e Entry per la password
-passwd_label_singup = ctk.CTkLabel(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'], 
-    text="Password"
-)
-passwd_label_singup.place(x=_map_item_x(60, SINGUP_FRAME_WIDTH), y=_map_item_y(90, SINGUP_FRAME_HEIGHT))
-
-passwd_singup_entry = ctk.CTkEntry(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'],
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT)
-)
-passwd_singup_entry.configure(show='*')
-passwd_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(110, SINGUP_FRAME_HEIGHT))
-
-# Label e Entry per la ripetizione della password
-repeat_passwd_label_singup = ctk.CTkLabel(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'], 
-    text="Ripeti password"
-)
-repeat_passwd_label_singup.place(x=_map_item_x(45, SINGUP_FRAME_WIDTH), y=_map_item_y(150, SINGUP_FRAME_HEIGHT))
-
-passwd_repeat_singup_entry = ctk.CTkEntry(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'],
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT)
-)
-passwd_repeat_singup_entry.configure(show='*')
-passwd_repeat_singup_entry.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(170, SINGUP_FRAME_HEIGHT))
-
-# Pulsante di registrazione
-singup_button = ctk.CTkButton(
-    master=frame_singup, 
-    bg_color=['gray92', 'gray14'], 
-    text="Registrati",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: perform_registration()
-)
-singup_button.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(210, SINGUP_FRAME_HEIGHT))
-
-# Pulsante per tornare indietro
-back_button_singup = ctk.CTkButton(
-    master=frame_singup,
-    bg_color=['gray92','gray14'],
-    text="Indietro",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: switch_page(home_page)
-    )
-back_button_singup.place(x=_map_item_x(24, SINGUP_FRAME_WIDTH), y=_map_item_y(250, SINGUP_FRAME_HEIGHT))
-
-def change_appearance_mode_event(new_appearance_mode: str):
-    save_config("theme", new_appearance_mode)
-    ctk.set_appearance_mode(new_appearance_mode)
-
-def change_color_event(new_color: str):
-    save_config("color", new_color)
-    ctk.set_default_color_theme(new_color)
-
-#FRAME SETTINGS
-SETTINGS_FRAME_WIDTH = 190 + 10
-SETTINGS_FRAME_HEIGHT = 263 + 60
-
-# Creazione del frame SETTINGS come frame scrollabile
-frame_settings = ctk.CTkScrollableFrame(
-    master=singup_page, 
-    width=_map_frame_x(SETTINGS_FRAME_WIDTH), 
-    height=_map_frame_y(SETTINGS_FRAME_HEIGHT),
-    orientation='vertical'                                  
-)
-frame_settings.grid_rowconfigure(0)
-
-# Label per il titolo "Impostazioni"
-settings_title_label = ctk.CTkLabel(
-    master=frame_settings, 
-    bg_color=['gray92', 'gray14'], 
-    text="Impostazioni",
-    font=("Helvetica", 16, "bold")  # Opzionale: cambia il font per enfatizzare il titolo
-)
-settings_title_label.grid(row=0, column=0)
-
-# Creazione del frame per la num key scale Scale
-frame_num_board = ctk.CTkFrame(master=frame_settings)
-frame_num_board.grid(row=5, column=0, padx=10, pady=10)  
-
-# Label per la KEYSIZE Scale
-num_board_scale_label_singup = ctk.CTkLabel(
-    master=frame_num_board, 
-    bg_color=['gray92', 'gray14'], 
-    text="NUM KEY size"
-)
-num_board_scale_label_singup.grid(row=0, column=0)
-
-# CTkSpinbox per la selezione della GUI Scale
-num_board_select_num = CTkSpinbox(
-    master=frame_num_board, 
-    bg_color=['gray86', 'gray17'],
-    width=_map_item_x(76, SETTINGS_FRAME_WIDTH),
-    height=_map_item_y(44, SETTINGS_FRAME_HEIGHT),
-    value=KEYWIDTH, 
-    fg_color=['gray81', 'gray20']
-)
-num_board_select_num.grid(row=8, column=0)  
-
-# Colleghi la funzione di aggiornamento alla variazione del valore del CTkSpinbox
-num_board_select_num.configure(command=lambda: update_num_board(num_board_select_num.get()))
-
-# Creazione del frame per la gui Scale
-frame_gui_scale = ctk.CTkFrame(master=frame_settings) 
-
-# Label per la GUISCALE Scale
-gui_scale_scale_label_singup = ctk.CTkLabel(
-    master=frame_gui_scale, 
-    bg_color=['gray92', 'gray14'], 
-    text="GUI scale size"
-)
-
-# CTkSpinbox per la selezione della GUI Scale
-gui_scale_select_num = CTkSpinbox(
-    master=frame_gui_scale, 
-    bg_color=['gray86', 'gray17'],
-    width=_map_item_x(76, SETTINGS_FRAME_WIDTH),
-    height=_map_item_y(44, SETTINGS_FRAME_HEIGHT),
-    value=GUI_SCALE, 
-    fg_color=['gray81', 'gray20']
-)
-
-frame_gui_scale.grid(               row=6, column=0, padx=10, pady=10)
-gui_scale_scale_label_singup.grid(  row=0, column=0)
-gui_scale_select_num.grid(          row=1, column=0)
-
-gui_scale_select_num.configure(command=lambda: update_gui_scale(gui_scale_select_num.get()))
-
-# Creazione del frame per l'aspetto
-frame_appearance = ctk.CTkFrame(master=frame_settings)
-frame_appearance.grid(row=7, column=0, padx=10, pady=10)
-
-# Label per l'aspetto
-appearance_mode_label = ctk.CTkLabel(frame_appearance, text="Tema:", anchor="w")
-appearance_mode_label.grid(row=0, column=0)
-
-# OptionMenu per selezionare l'aspetto
-appearance_mode_optionemenu = ctk.CTkOptionMenu(
-    frame_appearance, 
-    values=["Light", "Dark", "System"],
-    command=change_appearance_mode_event
-)
-default_theme_text = "Seleziona un tema"
-appearance_mode_optionemenu.set(default_theme_text)
-appearance_mode_optionemenu.grid(row=1, column=0)
-
-# Label per il colore
-color_label = ctk.CTkLabel(frame_appearance, text="Colore:", anchor="w")
-color_label.grid(row=8, column=0)
-
-# OptionMenu per selezionare il colore
-color_optionemenu = ctk.CTkOptionMenu(
-    frame_appearance, 
-    values=["green", "blue"],
-    command= change_color_event
-)
-default_color_text = "Seleziona un colore"
-color_optionemenu.set(default_color_text)
-color_optionemenu.grid(row=9, column=0)
-
-# Pulsante per le impostazioni del database
-db_settings = ctk.CTkButton(
-    master=frame_settings,
-    bg_color=['gray92','gray14'],
-    text="Impostazioni DB",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: show_db_config_dialog()
-)
-db_settings.grid(row=1, column=0)
-
-# Pulsante per le impostazioni dei disegni
-draw_settings = ctk.CTkButton(
-    master=frame_settings,
-    bg_color=['gray92','gray14'],
-    text="Impostazioni Disegni",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: show_draw_config_dialog()
-)
-draw_settings.grid(row=2, column=0)
-
-run_update = ctk.CTkButton(
-    master=frame_settings,
-    bg_color=['gray92','gray14'],
-    text="Applica aggiornamento",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: show_draw_config_dialog()
-)
-run_update.grid(row=3, column=0)
-
-# Pulsante per le impostazioni dei disegni
-update_settings = ctk.CTkButton(
-    master=frame_settings,
-    bg_color=['gray92','gray14'],
-    text="Impost. Update",
-    width= _map_item_x(140 + 10, SINGUP_FRAME_WIDTH),
-    height= _map_item_y(28 + 10, SINGUP_FRAME_HEIGHT),
-    command=lambda: show_update_config_dialog()
-)
-update_settings.grid(row=4, column=0)
+#SING_UP FRAME
 
 #FRAME NOTE
 N_NOTE_FRAME_WIDTH = 210
@@ -2427,8 +1521,8 @@ N_NOTE_FRAME_HEIGHT = 100
 
 frame_note = ctk.CTkFrame(
     master=home_page,
-    width=_map_frame_x(N_NOTE_FRAME_WIDTH), 
-    height=_map_frame_y(N_NOTE_FRAME_HEIGHT)
+    width=mapper._map_frame_x(N_NOTE_FRAME_WIDTH), 
+    height=mapper._map_frame_y(N_NOTE_FRAME_HEIGHT)
     )
 
 note_mode_checkbox = ctk.CTkCheckBox(
@@ -2458,8 +1552,8 @@ N_NOTE_FRAME_HEIGHT = 100
 
 frame_commessa = ctk.CTkFrame(
     master=home_page,
-    width=_map_frame_x(N_NOTE_FRAME_WIDTH), 
-    height=_map_frame_y(N_NOTE_FRAME_HEIGHT)
+    width=mapper._map_frame_x(N_NOTE_FRAME_WIDTH), 
+    height=mapper._map_frame_y(N_NOTE_FRAME_HEIGHT)
     )
 
 commessa_mode_checkbox = ctk.CTkCheckBox(
@@ -2474,7 +1568,7 @@ def get_user_databases(db_config):
 
         while time.time() - start_time < 10:  # Continua fino a quando non sono passati 10 secondi
             # Ottieni i nomi dei database presenti sul server PostgreSQL
-            databases = DBMan.fetch_data("SELECT datname FROM pg_catalog.pg_database", autoconnect=LOGGED_USER_DB)
+            databases = DBMan.fetch_data("SELECT datname FROM pg_catalog.pg_database", autoconnect=var.LOGGED_USER)
             #print(f"Lista database: {databases}")
 
             # Filtra solo i nomi dei database che terminano con "_user"
@@ -2495,9 +1589,6 @@ def get_user_databases(db_config):
 
 
 def order_to_db(TABLE_NAME):
-    global LOGGED_USER
-    global LOGGED_USER_DB
-    global selected_start_datetime
 
     if draw_mode_checkbox.get():
         numero_disegno = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("numero_disegno_tendina")
@@ -2515,7 +1606,6 @@ def order_to_db(TABLE_NAME):
     numero_pezzi = int(pezzi_select_num.get())
     orario_inizio = machine_data.machines[MACCHINARIO].dates.get_date("inizio") 
     print(f'\norario_inizio: {orario_inizio}')
-    #selected_start_datetime
     note_lavorazione = machine_data.machines[MACCHINARIO].prod_data.get_prod_data("note_lavorazione")
     print(f'\nnote_lavorazione: {note_lavorazione}')
     #note_num_entry.get()
@@ -2531,7 +1621,6 @@ def order_to_db(TABLE_NAME):
         #str(draw_num_entry.get())
 
     errore_riempimento = False
-    #print("selected_start_datetime: " + str(machine_data.machines[MACCHINARIO].dates.get_date("inizio")))
 
     start_date = machine_data.machines[MACCHINARIO].dates.get_date("inizio")
     print(f'\nstart_date: {start_date}')
@@ -2578,81 +1667,40 @@ def order_to_db(TABLE_NAME):
                   )
         return
 
-    try:
-        if(LOGGED_USER != '' and LOGGED_USER_DB != ''):
-            db_name = LOGGED_USER_DB
+    if(var.LOGGED_USER != '' and var.LOGGED_USER != ''):
+        db_name = var.LOGGED_USER_DB
 
-            DBMan.connect(db_name)
+        DBMan.connect(db_name)
+        
+        # Esegui la query per creare la tabella
+        create_table_query = queries.CREATE_TABLE_QUERY.format(TABLE_NAME)
+        result_create_table = DBMan.execute_query(create_table_query, commit=True)
 
-            query = """
-                CREATE TABLE IF NOT EXISTS {} (
-                    id SERIAL PRIMARY KEY,
-                    orario_inizio TIMESTAMP,
-                    orario_fine TIMESTAMP,
-                    numero_disegno TEXT,
-                    commessa_lavorazione TEXT,
-                    tempo_taglio INTEGER,
-                    tempo_tornitura INTEGER,
-                    tempo_fresatura INTEGER,
-                    tempo_elettroerosione INTEGER,
-                    
-                    tempo_setup INTEGER,
-                    numero_pezzi INTEGER,
-                    note_lavorazione TEXT,
-                    macchina TEXT
-                )
-            """.format(TABLE_NAME)
-
-            DBMan.execute_query(query)
-            
-            query = """
-                INSERT INTO {} (
-                    orario_inizio, 
-                    orario_fine, 
-                    numero_disegno, 
-                    commessa_lavorazione,
-                    tempo_taglio, 
-                    tempo_tornitura, 
-                    tempo_fresatura, 
-                    tempo_elettroerosione, 
-                    tempo_setup, 
-                    numero_pezzi, 
-                    note_lavorazione,
-                    macchina)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """.format(TABLE_NAME)
-
-            DBMan.execute_query(query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, tempo_setup, numero_pezzi, note_lavorazione, MACCHINARIO))
-            
+        # Esegui la query per inserire dati nella tabella
+        insert_query = queries.INSERT_QUERY.format(TABLE_NAME)
+        result_order = DBMan.execute_query(insert_query, (orario_inizio, orario_fine, numero_disegno, commessa_lavorazione, 
+                                           tempo_taglio, tempo_tornitura, tempo_fresatura, tempo_elettroerosione, 
+                                           tempo_setup, numero_pezzi, note_lavorazione, MACCHINARIO), commit=True)    
+        
+        DBMan.disconnect()
+        
+        if result_order and result_create_table:
             CTkMessagebox(title="Chiusura ordine", 
-                  message="Ordine chiuso con successo!",
-                  icon="info"
-                  )
-        else:
-            CTkMessagebox(title="Errore", 
-                  message=f"Devi effettuare il login per poter concludere l'ordine!",
-                  icon="info"
-                  )
-            return
-
-    except psycopg2.Error as e:
-        conn.rollback()
+                    message="Ordine chiuso con successo!",
+                    icon="info"
+                    )
+    else:
         CTkMessagebox(title="Errore", 
-                  message=f"Errore durante la chiusura dell'ordine: {e}",
-                  icon="info"
-                  )
-    '''
-    finally:
-        if conn is not None:
-            conn.close()
-    '''
+                message=f"Devi effettuare il login per poter concludere l'ordine!",
+                icon="info"
+                )
+        return
 
 def riprendi_ordine():
     print('riprendi ordine')
 
 def azzera_ordine():
-    global selected_start_datetime
-    if not ask_question_choice("Sei sicuro di voler azzerare l'ordine?"):
+    if not ask_question_choice("Sei sicuro di voler azzerare l'ordine?", home_page):
         return 
     machine_data.machines[MACCHINARIO].timers.reset_all_timers()
     tempo_setup_num.configure(value= 0)
@@ -2667,564 +1715,19 @@ def azzera_ordine():
     start_time_time_elapsed_label.configure(text= 'Da impostare')
     note_num_entry.delete('0', 'end')
     machine_data.machines[MACCHINARIO].dates.set_date("inizio", None)
+    machine_data.machines[MACCHINARIO].dates.set_date("fine", None)
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("numero_disegno_tendina", "Sel. num. disegno")
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("numero_disegno_entry", "")
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("commessa_lavorazione", "")
+    machine_data.machines[MACCHINARIO].prod_data.set_prod_data("note_lavorazione", "")
+    checkBoxMan.reset_checkbox_states(MACCHINARIO)
+
+    update_widgets_data()
+
+    #machine_data.machines[MACCHINARIO].prod_data.set_prod_data("checkboxes", "")
+
     
-
-def get_last_orders(num_ordini):
-    global LOGGED_USER_DB
-    
-    try:
-        # Query per ottenere gli ultimi ordini
-        query = f"""
-            SELECT * FROM ordini
-            ORDER BY id DESC
-            LIMIT %s
-        """
-        #cur.execute(query, (num_ordini,))
-        column_names, ultimi_ordini = DBMan.fetch_data(query, (num_ordini,), autoconnect=LOGGED_USER_DB, column_names=True) #cur.fetchall()
-
-        # Costruire una lista di dizionari usando i nomi delle colonne come chiavi
-        result = []
-        for row in ultimi_ordini:
-            order_dict = {column_names[i]: row[i] for i in range(len(row))}
-            result.append(order_dict)
-
-        print("Ultimi ordini:", result[0])
-
-        return result
-
-    except psycopg2.Error as e:
-        print("Errore durante l'interrogazione del database:", e)
-        return None
-
-
-def modifica_ordine():
-    global recent_orders_from_db, selected_order_from_table, TABLE_ORDERS_ROW, LOGGED_USER, LOGGED_USER_DB
-    ORDER_MOD_BUTTON_WIDTH = 100
-
-    if(LOGGED_USER == '' and LOGGED_USER_DB == ''):
-        CTkMessagebox(title="Errore", 
-                  message=f"Devi effettuare il login per poter concludere l'ordine!",
-                  icon="info"
-                  )
-        return
-    
-    switch_page(modify_order_page)
-
-    def back_to_home():
-        try:
-            frame_gestione_modifica_ordine_selezionato.place_forget()
-
-            frame_modify_order.grid_forget()
-            button_modifica_ordine_selezionato.grid_forget()
-            button_elimina_ordine_selezionato.grid_forget()
-            frame_gestione_selezione_ordine_effettuato.place_forget()
-
-            #button_conferma_modifica.grid_forget()
-            button_indietro_modifica.grid_forget()
-            frame_gestione_lista_ordini_effettuati.place_forget()
-            table_orders_list.destroy()
-        except Exception as e:
-            print(f"Errore durante il ritorno alla home: {e}")
-        switch_page(home_page)
-
-    def gestione_selezione():
-        
-        def draw_selected_order():
-            global selected_order_from_table, intestazioni
-            
-            for col, intestazione in enumerate(intestazioni):
-                #print(f'col: {col}, intestazione: {intestazione}')
-                table_selected_order.insert(0, col, intestazione, bg_color="lightgrey")
-
-            # Popolamento della tabella con l'ordine selezionato
-            ordine = selected_order_from_table
-            for col, valore in enumerate(ordine, start=0):
-                if isinstance(valore, datetime):
-                    valore = valore.strftime("%Y-%m-%d %H:%M:%S")
-
-                if col == 3 or col == 10 or col == 11 or col == 12:
-                    if valore == None:
-                        valore = ''
-                table_selected_order.insert(1, col, valore)
-
-            table_selected_order.grid(row=1, padx=5, pady=10)
-
-        draw_selected_order()
-        if frame_gestione_selezione_ordine_effettuato.winfo_exists():
-            frame_modify_order.grid_forget()
-            button_modifica_ordine_selezionato.grid_forget()
-            frame_gestione_selezione_ordine_effettuato.grid_forget()
-
-        frame_modify_order.grid(row=1, column= 0, columnspan= 3, padx=10, pady=10)
-        button_elimina_ordine_selezionato.grid( row=0, column=1, padx=10, pady=10)
-        frame_buttons_selezione_ordine_effettuato.grid(row=2, padx=10, pady=10)
-        frame_buttons_selezione_ordine_effettuato.lift()
-
-        frame_gestione_selezione_ordine_effettuato.grid(row=1,padx=10, pady=10)#place(relx=0.5, rely=0.8, anchor='s')
-
-    def show_row_select(cell):
-        global selected_row, prev_selected_row, selected_column, prev_selected_column, selected_order_from_table
-
-        if cell["row"] == 0:
-            return  # Non modificare l'intestazione
-
-        if selected_row is not None:
-            # Deseleziona la riga precedentemente selezionata
-            table_orders_list.deselect_row(selected_row)
-
-        if selected_column is not None:
-            # Deseleziona la colonna precedentemente selezionata
-            table_selected_order.deselect_column(selected_column)
-            selected_column = None
-
-        # Seleziona la nuova riga
-        selected = table_orders_list.get()[cell["row"]]
-        selected_order_from_table = selected
-        selected_row = cell["row"]
-        table_orders_list.edit_row(selected_row, fg_color=table_orders_list.hover_color)
-
-        gestione_selezione()
-
-    def show_column_select(cell):
-        global selected_column, column_name, column_value
-
-        if cell["column"] == 0:
-            return  # Non modificare l'intestazione
-
-        if selected_column is not None:
-            # Deseleziona la colonna precedentemente selezionata
-            table_selected_order.deselect_column(selected_column)
-
-        # Seleziona la nuova colonna
-        selected_column = cell["column"]
-        column_name = table_selected_order.get()[0][selected_column]
-        column_value = table_selected_order.get()[1][selected_column]
-        table_selected_order.edit_column(selected_column, fg_color=table_selected_order.hover_color)
-
-        button_modifica_ordine_selezionato.grid(row=0, column=0, padx=10, pady=10)
-
-    def update_db_value(id, value):
-        global selected_column, column_value, db_index_to_names
-        db_column_name = db_index_to_names[selected_column]
-        #try:
-        db_name = LOGGED_USER_DB
-
-        # Genera la query di aggiornamento dinamicamente
-        query = f"""
-            UPDATE {'ordini'} 
-            SET {db_column_name} = %s
-            WHERE id = %s
-        """
-
-        result = DBMan.execute_query(query, (value, id), commit=True, autoconnect=db_name)
-
-        if result:
-            CTkMessagebox(
-                title="Aggiornamento ordine",
-                message="Ordine aggiornato con successo!",
-                icon="info",
-                button_height=38,
-                button_width=150
-            )
-        
-        else:
-            CTkMessagebox(
-                title="Errore",
-                message="Errore durante l'aggiornamento dell'ordine!",
-                icon="warning",
-                button_height=38,
-                button_width=150
-            )
-        
-
-    def machine_modify_dialog(machines):
-        global DATA_ORDER_CHANGE, column_value
-
-        column_name = "Macchinario"
-        if column_value == None:
-            column_value = ''
-
-        def save_machine():
-            global column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
-            value_for_db = machine_select.get()
-            value_for_table = value_for_db
-            print(f"Modifica '{column_name}': {column_value}")
-            DATA_ORDER_CHANGE = True
-            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
-
-        dialog = ctk.CTkToplevel()
-        dialog.title(f"Modifica {column_name}")
-
-        ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
-        machine_select = ctk.CTkOptionMenu(master=dialog, values=machines, width=76, height=44)
-        #int_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, height=44)  # Personalizza i valori di 'from_' e 'to' secondo le tue esigenze
-        machine_select.grid(row=0, column=1, padx=5, pady=5)
-        #int_spinbox.set(column_value)
-
-        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_machine)
-        save_button.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
-
-        DATA_ORDER_CHANGE = False
-        
-        dialog.lift()
-        dialog.focus_set()
-        dialog.grab_set()
-        dialog.wait_window()
-
-    def int_modify_dialog(column_name):
-        global DATA_ORDER_CHANGE, column_value
-        if column_value == None:
-            column_value = 0
-
-        def save_int():
-            global column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
-            value_for_db = int_spinbox.get()
-            value_for_table = value_for_db
-            print(f"Modifica '{column_name}': {column_value}")
-            DATA_ORDER_CHANGE = True
-            dialog.destroy()  # Chiudi il dialogo dopo aver salvato i dati
-
-        dialog = ctk.CTkToplevel()
-        dialog.title(f"Modifica {column_name}")
-
-        ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
-        int_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, height=44)  # Personalizza i valori di 'from_' e 'to' secondo le tue esigenze
-        int_spinbox.grid(row=0, column=1, padx=5, pady=5)
-        int_spinbox.set(column_value)
-
-        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_int)
-        save_button.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
-
-        DATA_ORDER_CHANGE = False
-        
-        dialog.lift()
-        dialog.focus_set()
-        dialog.grab_set()
-        dialog.wait_window()
-
-    def string_modify_dialog(column_name):
-        global DATA_ORDER_CHANGE, column_value, value_for_db, value_for_table
-        index_to_modify = find_index_from_id(selected_order_from_table[0])
-        value_for_db = recent_orders_from_db[index_to_modify][db_index_to_names[selected_column]]
-        if value_for_db == None:
-            value_for_db = ''
-        if value_for_table == None:
-            value_for_table = ''
-        print(f"value_for_db_1 prima della mod: {value_for_db}")
-        print(f'valore "value_for_table" in string modify dialog: {value_for_table}')
-        print(f'column_value: {column_value}')
-        
-        def clean_string(string_to_clean):
-            print(f"string_to_clean 1: {string_to_clean}")
-            while string_to_clean[-1] == '\n':
-                string_to_clean = string_to_clean[:-1]
-            print(f"string_to_clean 2: {string_to_clean}")
-            return string_to_clean
-        
-        def save_string():
-            global column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
-            value_for_db = clean_string(entry_string.get("0.0", "end"))
-            value_for_table = value_for_db[:10]
-
-            print(f'valore "value_for_db" in save string: {value_for_db}')
-            print(f'valore "value_for_table" in save string: {value_for_table}')
-            DATA_ORDER_CHANGE = True
-            dialog.destroy()
-
-        dialog = ctk.CTkToplevel()
-        dialog.title(f"Modifica {column_name}")
-
-        ctk.CTkLabel(master=dialog, text=f"{column_name}:").grid(row=0, column=0, padx=5, pady=5)
-        entry_string = ctk.CTkTextbox(master=dialog, width=250, height=150)
-        entry_string.grid(row=1, column=0, padx=5, pady=5)
-
-        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_string)
-        save_button.grid(row=2, column=0, padx=5, pady=5)
-
-        if(column_value == None):
-            column_value = ''
-            entry_string.insert("0.0", value_for_db)
-        else:
-            entry_string.insert("0.0", value_for_db)
-
-        DATA_ORDER_CHANGE = False
-        
-        dialog.lift()
-        dialog.focus_set()
-        dialog.grab_set()
-        dialog.wait_window()
-
-    def datetime_modify_dialog(datetime_to_mod):
-        global DATA_ORDER_CHANGE
-
-        def save_datetime():
-            global new_date, column_value, DATA_ORDER_CHANGE, value_for_db, value_for_table
-            selected_date = datetime.strptime(f"{day_spinbox.get()}/{month_spinbox.get()}/{year_spinbox.get()}", "%d/%m/%Y")
-            selected_hour = int(hour_spinbox.get())
-            selected_minute = int(minute_spinbox.get())
-            value_for_db = datetime(selected_date.year, selected_date.month, selected_date.day, selected_hour, selected_minute)
-            value_for_table = value_for_db.strftime("%m-%d %H:%M:%S")
-            print("Data e ora inserite:", column_value)
-            DATA_ORDER_CHANGE = True
-            dialog.destroy()
-
-        current_date = datetime.now()
-        current_hour = datetime_to_mod.hour
-        current_minute = datetime_to_mod.minute
-
-        dialog = ctk.CTkToplevel()
-        dialog.title("Inserisci data e ora d'inizio")
-
-        ctk.CTkLabel(master=dialog, text="Data:").grid(row=0, column=0, padx=5, pady=5)
-        day_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=31, height=44, value=datetime_to_mod.day)
-        day_spinbox.grid(row=0, column=1, padx=5, pady=5)
-
-        ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=2)
-        month_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=1, to=12, height=44, value=datetime_to_mod.month)
-        month_spinbox.grid(row=0, column=3, padx=5, pady=5)
-
-        ctk.CTkLabel(master=dialog, text="/").grid(row=0, column=4)
-        year_spinbox = CTkSpinbox(master=dialog, button_width=50, width=76, from_=datetime_to_mod.year, to=datetime_to_mod.year + 100, height=44, value=current_date.year)
-        year_spinbox.grid(row=0, column=5, padx=5, pady=5)
-
-        ctk.CTkLabel(master=dialog, text="Ora:").grid(row=1, column=0, padx=5, pady=5)
-        hour_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=23, width=76, height=44, value=current_hour)
-        hour_spinbox.grid(row=1, column=1, padx=5, pady=5)
-        
-        ctk.CTkLabel(master=dialog, text="Minuti:").grid(row=1, column=2, padx=5, pady=5)
-        minute_spinbox = CTkSpinbox(master=dialog, button_width=50, from_=0, to=59, width=76, height=44, value=current_minute)
-        minute_spinbox.grid(row=1, column=3, padx=5, pady=5)
-
-        save_button = ctk.CTkButton(master=dialog, text="Salva", command=save_datetime)
-        save_button.grid(row=2, column=0, columnspan=6, padx=5, pady=5)
-
-        DATA_ORDER_CHANGE = False
-
-        dialog.lift()
-        dialog.focus_set()  
-        dialog.grab_set()   
-        dialog.wait_window()
-
-    def find_index_from_id(selected_id):
-        index_recent_orders = -1
-        for i, order in enumerate(recent_orders_from_db):
-            print(f'order[0]: {order}, selected_id: {selected_id}')
-            if order['id'] == selected_id:
-                index_recent_orders = i
-                break
-        return index_recent_orders
-    
-    def update_tables_values(index_recent_orders):
-        global value_for_table
-        print(f'update_tables_values\nvalue_for_db: {value_for_db}, value_for_table: {value_for_table}')
-        recent_orders_from_db[index_recent_orders][selected_column] = value_for_db #ins valore nel dict del db
-        print(f'recent_orders_from_db: {recent_orders_from_db[index_recent_orders][selected_column]}')
-        table_selected_order.insert(1, selected_column, value_for_table)# ins valore nella tabella selezionata
-        selected_order_from_table[selected_column] = value_for_table# ins valore nella tabella ordini recenti
-        print(f'selected_order_from_table: {selected_order_from_table[selected_column]}')
-        table_orders_list.insert(selected_row, selected_column, value_for_table)
-        
-    def modifica_valore_colonna():
-        global selected_column, column_name, column_value, new_date, selected_order_from_table, value_for_db, value_for_table
-        selected_id = selected_order_from_table[0]
-        print(f'selected_id: {selected_id}, selected_order_from_db: {selected_order_from_table}')
-        print(f'selected_id: {selected_id}, selected_order_from_table: {selected_order_from_table}')
-        index_recent_orders = find_index_from_id(selected_id)
-        print(f'selected_column: {selected_column}')
-
-        value_for_db = None
-        value_for_table = None
-
-        if selected_column == 1 or selected_column == 2:
-            if column_value == None or column_value == 'error':
-                print('error value found')
-                column_value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            date_value_datetime = datetime.strptime(column_value, "%Y-%m-%d %H:%M:%S")
-            
-            datetime_modify_dialog(date_value_datetime)
-            if(DATA_ORDER_CHANGE):
-                update_tables_values(index_recent_orders)
-
-        elif selected_column == 3 or selected_column == 10 or selected_column == 11:
-            string_modify_dialog(column_name)
-            if(DATA_ORDER_CHANGE):
-                update_tables_values(index_recent_orders)
-
-        elif selected_column == 4 or selected_column == 5 or selected_column == 6 or selected_column == 7 or selected_column == 8 or selected_column == 9:
-            int_modify_dialog(column_name)
-            if(DATA_ORDER_CHANGE):
-                update_tables_values(index_recent_orders)
-
-        elif selected_column == 12:
-            machine_modify_dialog(machines)
-            if(DATA_ORDER_CHANGE):
-                update_tables_values(index_recent_orders)
-
-        if DATA_ORDER_CHANGE:
-            print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
-            update_db_value(selected_order_from_table[0], value_for_db)
-            value_for_db = None
-            value_for_table = None
-
-        else:
-            print(f'DATA_ORDER_CHANGE: {DATA_ORDER_CHANGE}')
-
-    def elimina_ordine():
-        global selected_order_from_table, selected_row
-
-        CHOICE = ask_question_choice(f"Sei sicuro di voler eliminare l'ordine con ID:{selected_order_from_table[0]}")
-
-        if CHOICE:
-            db_name = LOGGED_USER_DB
-
-            query = """
-                DELETE FROM {} 
-                WHERE id = %s
-            """.format('ordini')
-
-            result = DBMan.execute_query(query, (selected_order_from_table[0],), commit=True, autoconnect=db_name)
-
-            if result:
-                CTkMessagebox(
-                    title="Eliminazione ordine",
-                    message="Ordine eliminato con successo!",
-                    icon="info",
-                    button_height=38,
-                    button_width=150
-                )
-            
-            else:
-                CTkMessagebox(
-                    title="Errore",
-                    message="Errore durante l'eliminazione dell'ordine!",
-                    icon="warning",
-                    button_height=38,
-                    button_width=150
-                )
-                return
-
-            table_orders_list.delete_row(selected_row)
-            draw_table_orders()
-            button_modifica_ordine_selezionato.grid_forget()
-            button_elimina_ordine_selezionato.grid_forget()
-            frame_gestione_selezione_ordine_effettuato.place_forget()
-
-    frame_order = ctk.CTkFrame(master=modify_order_page)
-    frame_order.place(relx=0.5, anchor='n')
-
-    frame_order_list = ctk.CTkScrollableFrame(master=frame_order, width= 900)#root_width - 100)#, height= root_height / 2)#, height=ORDER_MAN_FRAME_HEIGHT)
-    frame_order_list.grid(row=0, column=0, columnspan= 3, padx=5, pady=5)
-
-    frame_modify_order = ctk.CTkFrame(master=frame_order, width=ORDER_MAN_FRAME_WIDTH)
-
-    frame_gestione_selezione_ordine_effettuato = ctk.CTkFrame(
-        master=frame_modify_order,
-        width=ORDER_MAN_FRAME_WIDTH,
-        height=ORDER_MAN_FRAME_HEIGHT
-    )
-
-    COLUMN_NUM = 13
-
-    table_orders_list = CTkTable(master=frame_order_list, width= 50, height= 38, row=TABLE_ORDERS_ROW + 1, command=show_row_select, column=COLUMN_NUM)
-    table_selected_order = CTkTable(master=frame_gestione_selezione_ordine_effettuato, width= 50, height= 38,  command=show_column_select, row=2, column=COLUMN_NUM)
-
-    # Creazione del frame
-    frame_gestione_lista_ordini_effettuati = ctk.CTkFrame(
-        master=frame_order, #modify_order_page,
-        width=ORDER_MAN_FRAME_WIDTH,
-        height=ORDER_MAN_FRAME_HEIGHT
-    )
-    
-    button_indietro_modifica = ctk.CTkButton(
-        master=frame_gestione_lista_ordini_effettuati, 
-        bg_color=['gray92', 'gray14'],
-        text="Indietro",
-        width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
-        command=lambda: back_to_home()
-    )
-
-    # Posizionamento del frame
-    frame_buttons_selezione_ordine_effettuato = ctk.CTkFrame(
-        master=frame_gestione_selezione_ordine_effettuato,
-        width=ORDER_BUTTONS_FRAME_WIDTH,
-        height=ORDER_BUTTONS_FRAME_WIDTH
-    )
-
-    button_modifica_ordine_selezionato = ctk.CTkButton(
-        master=frame_buttons_selezione_ordine_effettuato, 
-        bg_color=['gray92', 'gray14'],
-        text="Modifica ordine",
-        width=_map_item_x(140 + 10, ORDER_BUTTONS_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, ORDER_BUTTONS_FRAME_HEIGHT),
-        command=lambda: modifica_valore_colonna()
-    )
-
-    button_elimina_ordine_selezionato = ctk.CTkButton(
-        master=frame_buttons_selezione_ordine_effettuato, 
-        bg_color=['gray92', 'gray14'], 
-        text="Elimina ordine",
-        width=_map_item_x(140 + 10, ORDER_BUTTONS_FRAME_WIDTH),
-        height=_map_item_y(28 + 10, ORDER_BUTTONS_FRAME_HEIGHT),
-        command=lambda: elimina_ordine()
-    )
-
-    frame_gestione_lista_ordini_effettuati.grid(row=2, column= 1, padx=10, pady=10)
-    button_indietro_modifica.grid(row=0, column=3, padx=10, pady=10)
-
-    def draw_table_orders():
-        global recent_orders_from_db, intestazioni, TABLE_ORDERS_ROW
-
-        frame_order_list.grid(row=0, padx=10, pady=10)
-
-        recent_orders_from_db = None
-        while recent_orders_from_db is None:
-            recent_orders_from_db = get_last_orders(TABLE_ORDERS_ROW)
-        TABLE_ORDERS_ROW = len(recent_orders_from_db)
-        #print('recent_orders_from_db len:', len(recent_orders_from_db))
-
-        # Popolamento dell'intestazione della tabella
-        try:
-            for col, intestazione in enumerate(intestazioni):
-                print(f'col: {col}, intestazione: {intestazione}')#, valore: {recent_orders_from_db[0][intestazioni[col]]}')
-                table_orders_list.insert(0, col, intestazione, bg_color="lightgrey")    
-        
-        except Exception as e:
-            print(f"Errore durante il popolamento dell'intestazione della tabella: {e}")
-        
-        # Popolamento della tabella con gli ordini
-        print("qui ci arrivo")
-        print(f'recent_orders_from_db: {recent_orders_from_db[0]}')
-        
-        for row, ordine in enumerate(recent_orders_from_db, start=1):
-            for col, valore in ordine.items():  # Usiamo items() per iterare su chiave e valore del dizionario
-                col_index = db_names_to_index.get(col)
-                print(f'col_index: {col_index}, valore: {valore}')
-                try:
-                    if col_index == 1 or col_index == 2:
-                        val_for_table = valore.strftime("%Y-%m-%d %H:%M:%S")
-                    elif col_index == 3 or col_index == 10 or col_index == 11 or col_index == 12:
-                        if valore == None:
-                            valore = ''
-                        val_for_table = valore[:10]
-                    elif col_index == 0   or col_index == 4   or col_index == 5 or col_index == 6 or col_index == 7 or col_index == 8 or col_index == 9:
-                        val_for_table = valore
-                except:
-                    val_for_table = 'error'
-                print(f'val_for_table: {val_for_table}')
-                table_orders_list.insert(row, col_index, val_for_table)
-                val_for_table = None
-        #print(recent_orders_from_db)
-        table_orders_list.pack(expand=True, padx=20, pady=20, anchor='n')
-        
-
-    draw_table_orders()
-
-    frame_gestione_modifica_ordine_selezionato = ctk.CTkFrame(
-        master=modify_order_page,
-        width=ORDER_MAN_FRAME_WIDTH,
-        height=ORDER_MAN_FRAME_HEIGHT
-    )
+#GESTIONE ORDINE ESTERNALIZZATO
 
 def salva_ordine():
     order_to_db('ordini_in_sospeso')
@@ -3287,9 +1790,7 @@ ORDER_MAN_FRAME_WIDTH = 400
 ORDER_MAN_FRAME_HEIGHT = 200
 
 # Creazione del frame
-frame_seleziona_macchina = ctk.CTkFrame(
-    master=home_page
-)
+frame_seleziona_macchina = ctk.CTkFrame(master=home_page)
 
 def on_checkbox_change(checkbox_name):
     global PADX
@@ -3481,8 +1982,8 @@ button_conferma_ordine = ctk.CTkButton(
     master=frame_gestione_ordine, 
     bg_color=['gray92', 'gray14'], 
     text="Conferma ordine",
-    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    width=mapper._map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=mapper._map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
     command=lambda: conferma_ordine()
 )
 
@@ -3493,9 +1994,9 @@ button_storico_ordini = ctk.CTkButton(
     master=frame_gestione_ordine, 
     bg_color=['gray92', 'gray14'], 
     text="Storico ordini",
-    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
-    command=lambda: modifica_ordine()
+    width=mapper._map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=mapper._map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    command=lambda: modifica_ordine(switch_page, home_page, modify_order_page, ctk, mapper, DBMan)
 )
 
 # Posizionamento del frame
@@ -3505,8 +2006,8 @@ button_reset_ordine = ctk.CTkButton(
     master=frame_gestione_ordine, 
     bg_color=['gray92', 'gray14'], 
     text="Azzera ordine",
-    width=_map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
-    height=_map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
+    width=mapper._map_item_x(140 + 10, ORDER_MAN_FRAME_WIDTH),
+    height=mapper._map_item_y(28 + 10, ORDER_MAN_FRAME_HEIGHT),
     command=lambda: azzera_ordine()
 )
 
@@ -3514,7 +2015,7 @@ button_reset_ordine = ctk.CTkButton(
 button_reset_ordine.grid(row=0, column=3, padx=PADX_FRAME_GESTIONE_ORDINI, pady=PADY_FRAME_GESTIONE_ORDINI)
 
 pezzi_label = ctk.CTkLabel(master=frame_n_pezzi, bg_color=['gray86', 'gray17'], text="N. Pezzi")
-pezzi_label.place(x=_map_item_x(55, N_PEZZI_FRAME_WIDTH), y=_map_item_y(8, N_PEZZI_FRAME_HEIGHT))
+pezzi_label.place(x=mapper._map_item_x(55, N_PEZZI_FRAME_WIDTH), y=mapper._map_item_y(8, N_PEZZI_FRAME_HEIGHT))
 
 users_list = get_user_databases(db_config) #["Utente1", "Utente2", "Utente3"]
 
@@ -3523,31 +2024,22 @@ root.resizable(True, True)  # La finestra sarà ridimensionabile sia in larghezz
 def on_window_resize(event):
     global root_height
     global root_width
-    global numpad_x
-    global numpad_y
 
-    #selected_checkbox_text = machine_data.machines[MACCHINARIO].prod_data.get_prod_data('checkbox_state')
     selected_checkbox_number = checkBoxMan.count_true(MACCHINARIO)
     # Aggiorna i valori dei widget in base alle dimensioni attuali della finestra
     root_width = root.winfo_width()
     root_height = root.winfo_height()
     if frame_container_time.winfo_exists():
-        width_container_time_frame = 222.5 * selected_checkbox_number#len(selected_checkbox_text.split(", "))
+        width_container_time_frame = 222.5 * selected_checkbox_number
         if(width_container_time_frame < root_width - 150 or width_container_time_frame > 800):
-            #print(f"width_container_time_frame: {width_container_time_frame}, root_width: {root_width}")
             frame_container_time.place_forget()
-            frame_container_time.configure(width = 222.5 * selected_checkbox_number)#len(selected_checkbox_text.split(", ")))
+            frame_container_time.configure(width = 222.5 * selected_checkbox_number)
         else:
             frame_container_time.place_forget()
             frame_container_time.configure(width = root_width - 250)
         frame_container_time.place(relx=0.50, rely=0.19, anchor='n')
     else:
         frame_container_time.place_forget()
-
-    if frame_singup.winfo_exists():
-        frame_singup.place(relx=0.40, rely=0.1, anchor='n')
-    if frame_settings.winfo_exists():
-        frame_settings.place(relx=0.60, rely=0.1, anchor='n')
 
     if frame_n_pezzi.winfo_exists():
         frame_n_pezzi.place(relx=0.999, rely=0.5, anchor='e')
@@ -3579,72 +2071,12 @@ def on_window_resize(event):
     if frame_note.winfo_exists():
         frame_note.place(relx=0.999, rely=0.3, anchor='e')
 
+#NUMPADS
+entry_list = [tempo_setup_num.entry, 
+              tempo_taglio_num.entry, tempo_fresatura_num.entry, tempo_tornitura_num.entry, 
+              tempo_elettro_num.entry, pezzi_select_num.entry]
 
-
-
-numpad_singup_password = CTkPopupKeyboard.PopupNumpad(
-    attach= passwd_singup_entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_singup_repeat_password = CTkPopupKeyboard.PopupNumpad(
-    attach= passwd_repeat_singup_entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_setup = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_setup_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_taglio = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_taglio_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_fresatura = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_fresatura_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_tornitura = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_tornitura_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_elettro = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_elettro_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_n_pezzi = CTkPopupKeyboard.PopupNumpad(
-    attach= pezzi_select_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
-numpad_setup = CTkPopupKeyboard.PopupNumpad(
-    attach= tempo_tornitura_num.entry,
-    keycolor= 'dodgerblue2',
-    keywidth= KEYWIDTH,
-    keyheight= KEYHEIGHT
-    )
-
+numpads = numPads.generate_numpads(entry_list, keyheight= var.KEYHEIGHT, keywidth= var.KEYWIDTH)
 
 def on_draw_entry_change(event):
     machine_data.machines[MACCHINARIO].prod_data.set_prod_data("numero_disegno_entry", draw_num_entry.get())
@@ -3658,10 +2090,6 @@ def on_note_entry_change(event):
     machine_data.machines[MACCHINARIO].prod_data.set_prod_data("note_lavorazione", note_num_entry.get())
     print(f'machine_data.machines[{MACCHINARIO}].prod_data.get_set_prod_data("note_lavorazione"): {machine_data.machines[MACCHINARIO].prod_data.get_prod_data("note_lavorazione")}')
 
-switch_singup = ctk.CTkSwitch(singup_page, text="On-Screen Numboard", command=show_popup_singup)
-switch_singup.pack(pady=10)
-switch_singup.toggle()
-
 # Associa la funzione on_checkbox_change a ciascun checkbox
 tornitura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("tornitura"))
 fresatura_checkbox.bind("<Button-1>", lambda event: on_checkbox_change("fresatura"))
@@ -3673,19 +2101,18 @@ draw_num_entry.bind("<KeyRelease>", on_draw_entry_change)
 commessa_num_entry.bind("<KeyRelease>", on_commessa_entry_change)
 note_num_entry.bind("<KeyRelease>", on_note_entry_change)
 
-
-
 def schedule_check():
+    time_check = 30000
     # Esegui il controllo e poi pianifica il prossimo controllo
-    check_db_connection(db_config)
-    root.after(30000, schedule_check)  # 5000 millisecondi = 5 secondi
+    state = check_db_connection()
+    if state and var.LOGGED_USER != '':
+        time_check = 30000
+    else:
+        time_check = 1000
+    root.after(time_check, schedule_check)  # 5000 millisecondi = 5 secondi
 
-#schedule_check()
+schedule_check()
 
 root.bind("<Configure>", on_window_resize)
 
 root.mainloop()
-
-
-
-

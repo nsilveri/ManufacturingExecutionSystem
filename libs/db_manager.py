@@ -1,4 +1,5 @@
 import psycopg2
+from CTkMessagebox import CTkMessagebox
 
 class DbManager:
     def __init__(self, db_config, db_name):
@@ -16,6 +17,8 @@ class DbManager:
         
         except psycopg2.Error as e:
             print("Error connecting to database:", e)
+            CTkMessagebox(title= "Errore", message= f"Errore durante la connessione al database: {e}", icon="error", 
+                          option_1="OK", button_width= 50)
             return False
 
     def disconnect(self):
@@ -73,6 +76,7 @@ class DbManager:
             return True
         except psycopg2.Error as e:
             print("Error executing query:", e)
+            CTkMessagebox(title= "Errore", message= f"Errore durante l'esecuzione della query: {e}", icon= "error", button_width= 50)
             return False
 
     def fetch_data(self, query, params=None, autoconnect=None, column_names=False):
@@ -112,6 +116,7 @@ class DbManager:
                     return result
         except psycopg2.Error as e:
             print("Error fetching data:", e)
+            CTkMessagebox(title= "Errore", message= f"Errore durante il recupero dei dati: {e}", icon= "error", button_width= 50)
             return None
         
     def test_connection(self):
